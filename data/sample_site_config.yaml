@@ -1,0 +1,47 @@
+org:
+  name: "Demo Org"
+
+defaults:
+  atg:
+    poll_interval_sec: 60
+    timeout_sec: 5
+    retries: 3
+    stale_sec: 180
+  pump_side:
+    port: 5201
+    timeout_sec: 5
+    stale_sec: 180
+    keepalive: true
+    reconnect: true
+
+sites:
+  - site_code: "1032"
+    name: "Station 1032"
+    address: "123 Main St"
+    region: "North"
+    lat: 45.4215
+    lon: -75.6972
+    integrations:
+      atg_host: "10.12.4.20"
+      atg_port: 10001
+      atg_poll_interval_sec: 60
+    tanks:
+      - atg_tank_id: "01"
+        label: "Regular UST"
+        product: "Regular"
+        capacity_liters: 40000
+      - atg_tank_id: "02"
+        label: "Premium UST"
+        product: "Premium"
+        capacity_liters: 30000
+    pumps:
+      - pump_number: 1
+        label: "Island A - Pump 01"
+        sides:
+          A: { ip: "10.12.4.31", port: 5201 }
+          B: { ip: "10.12.4.32", port: 5201 }
+      - pump_number: 2
+        label: "Island A - Pump 02"
+        sides:
+          A: { ip: "10.12.4.33", port: 5201 }
+          B: { ip: "10.12.4.34", port: 5201 }

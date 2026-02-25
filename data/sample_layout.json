@@ -1,0 +1,28 @@
+{
+  "siteId": "1032",
+  "version": 1,
+  "northUp": true,
+  "gridSize": 20,
+  "objects": [
+    { "id": "store-1", "type": "store", "label": "Store", "x": 480, "y": 220, "w": 280, "h": 160, "rotation": 0 },
+
+    { "id": "island-1", "type": "island", "label": "Island 1", "x": 220, "y": 140, "w": 140, "h": 260, "rotation": 90, "slotCount": 2 },
+    { "id": "island-2", "type": "island", "label": "Island 2", "x": 360, "y": 430, "w": 420, "h": 140, "rotation": 0, "slotCount": 3 },
+    { "id": "island-3", "type": "island", "label": "Island 3", "x": 780, "y": 140, "w": 140, "h": 260, "rotation": 90, "slotCount": 2 },
+
+    { "id": "pump-1", "type": "pump", "pumpNumber": 1, "label": "Pump 01", "islandId": "island-1", "slotIndex": 0, "rotation": 90,
+      "sides": { "A": { "ip": "10.12.4.31", "port": 5201 }, "B": { "ip": "10.12.4.32", "port": 5201 } } },
+
+    { "id": "pump-2", "type": "pump", "pumpNumber": 2, "label": "Pump 02", "islandId": "island-1", "slotIndex": 1, "rotation": 90,
+      "sides": { "A": { "ip": "10.12.4.33", "port": 5201 }, "B": { "ip": "10.12.4.34", "port": 5201 } } },
+
+    { "id": "pump-3", "type": "pump", "pumpNumber": 3, "label": "Pump 03", "islandId": "island-2", "slotIndex": 0, "rotation": 0,
+      "sides": { "A": { "ip": "10.12.4.41", "port": 5201 }, "B": { "ip": "10.12.4.42", "port": 5201 } } },
+
+    { "id": "pump-4", "type": "pump", "pumpNumber": 4, "label": "Pump 04", "islandId": "island-2", "slotIndex": 1, "rotation": 0,
+      "sides": { "A": { "ip": "10.12.4.43", "port": 5201 }, "B": { "ip": "10.12.4.44", "port": 5201 } } },
+
+    { "id": "pump-5", "type": "pump", "pumpNumber": 5, "label": "Pump 05", "islandId": "island-2", "slotIndex": 2, "rotation": 0,
+      "sides": { "A": { "ip": "10.12.4.45", "port": 5201 }, "B": { "ip": "10.12.4.46", "port": 5201 } } }
+  ]
+}

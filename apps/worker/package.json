@@ -1,0 +1,11 @@
+{
+  "name": "petroleum-worker",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/worker.js",
+  "scripts": {
+    "dev": "node src/worker.js",
+    "start": "node src/worker.js",
+    "build": "node -e \"console.log('worker build: no transpilation needed')\""
+  }
+}

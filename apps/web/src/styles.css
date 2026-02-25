@@ -1,0 +1,150 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #10232f;
+  background: #f2f6f9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: #0a5d80;
+  text-decoration: none;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: #163444;
+  color: #f6fbff;
+}
+
+.topbar nav {
+  display: flex;
+  gap: 16px;
+}
+
+.topbar a {
+  color: #d9edf7;
+  font-weight: 600;
+}
+
+.content {
+  padding: 20px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  background: white;
+  border: 1px solid #d7e4eb;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.card h3 {
+  margin: 0 0 8px;
+}
+
+.severity-critical {
+  color: #9b1b1b;
+  font-weight: 700;
+}
+
+.severity-warn {
+  color: #9c6200;
+  font-weight: 700;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+.table th,
+.table td {
+  border: 1px solid #d7e4eb;
+  padding: 8px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.layout-canvas {
+  position: relative;
+  width: 100%;
+  min-height: 640px;
+  background: linear-gradient(180deg, #eef6fb 0%, #dde8ef 100%);
+  border-radius: 10px;
+  border: 1px solid #c9dbe6;
+  overflow: auto;
+}
+
+.layout-object {
+  position: absolute;
+  border: 1px solid #2f5466;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 12px;
+  color: #123040;
+  cursor: grab;
+}
+
+.object-store {
+  background: #b8ced8;
+}
+
+.object-island {
+  background: #d8e6ed;
+}
+
+.object-pump {
+  background: #ffffff;
+}
+
+.pump-sides {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 14px;
+}
+
+.selected {
+  border: 2px solid #e14d2a;
+  box-shadow: 0 0 0 2px #ffd7cc;
+}
+
+button {
+  border: 1px solid #b7c9d5;
+  background: #f9fcff;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
