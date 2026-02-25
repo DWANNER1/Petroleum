@@ -1,8 +1,25 @@
 const { Pool } = require("pg");
 
-const connectionString = process.env.DATABASE_URL;
+function resolveConnectionString() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+
+  const host = process.env.PGHOST || process.env.RAILWAY_TCP_PROXY_DOMAIN;
+  const port = process.env.PGPORT || process.env.RAILWAY_TCP_PROXY_PORT || "5432";
+  const user = process.env.PGUSER || process.env.POSTGRES_USER;
+  const password = process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD;
+  const database = process.env.PGDATABASE || process.env.POSTGRES_DB;
+
+  if (host && user && password && database) {
+    return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+  }
+  return "";
+}
+
+const connectionString = resolveConnectionString();
 if (!connectionString) {
-  throw new Error("DATABASE_URL is required for the API.");
+  throw new Error(
+    "Postgres connection is missing. Set DATABASE_URL or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE."
+  );
 }
 
 const pool = new Pool({
