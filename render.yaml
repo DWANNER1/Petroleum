@@ -20,13 +20,3 @@ services:
     envVars:
       - key: VITE_API_BASE_URL
         value: https://petroleum-api.onrender.com
-
-  - type: worker
-    name: petroleum-worker
-    runtime: node
-    rootDir: .
-    buildCommand: npm install && npm --workspace apps/worker run build
-    startCommand: npm --workspace apps/worker run start
-    envVars:
-      - key: NODE_VERSION
-        value: 20
