@@ -41,5 +41,9 @@ export const api = {
     const query = new URLSearchParams(params).toString();
     return request(`/alerts${query ? `?${query}` : ""}`);
   },
+  getTankHistory: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return request(`/history/tanks${query ? `?${query}` : ""}`);
+  },
   ackAlert: (id) => request(`/alerts/${id}/ack`, { method: "POST" })
 };

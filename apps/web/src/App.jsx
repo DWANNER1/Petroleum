@@ -1,11 +1,43 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { loginDefault } from "./api";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { WorkQueuePage } from "./pages/WorkQueuePage";
 import { SiteDetailPage } from "./pages/SiteDetailPage";
 import { LayoutPage } from "./pages/LayoutPage";
 import { LayoutEditorPage } from "./pages/LayoutEditorPage";
+
+function AppFrame({ children }) {
+  const location = useLocation();
+  const pageTitle =
+    location.pathname.startsWith("/sites/") ? "Site Operations" :
+    location.pathname.startsWith("/work-queue") ? "Service Work Queue" :
+    "Portfolio Command Center";
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">Petroleum Ops</div>
+        <nav className="side-nav">
+          <NavLink to="/portfolio" className={({ isActive }) => (isActive ? "active" : "")}>
+            Portfolio
+          </NavLink>
+          <NavLink to="/work-queue" className={({ isActive }) => (isActive ? "active" : "")}>
+            Work Queue
+          </NavLink>
+        </nav>
+      </aside>
+      <section className="main-shell">
+        <header className="topbar">
+          <div>
+            <div className="topbar-title">{pageTitle}</div>
+            <div className="topbar-subtitle">Gas Station Monitoring Dashboard</div>
+          </div>
+        </header>
+        <main className="content">{children}</main>
+      </section>
+    </div>
+  );
+}
 
 export default function App() {
   const [status, setStatus] = useState("loading");
@@ -24,15 +56,7 @@ export default function App() {
   if (status === "error") return <div className="content">Login failed: {error}</div>;
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <strong>Petroleum Dashboard</strong>
-        <nav>
-          <Link to="/portfolio">Portfolio</Link>
-          <Link to="/work-queue">Work Queue</Link>
-        </nav>
-      </header>
-      <main className="content">
+    <AppFrame>
         <Routes>
           <Route path="/" element={<Navigate to="/portfolio" replace />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
@@ -41,7 +65,6 @@ export default function App() {
           <Route path="/sites/:siteId/layout" element={<LayoutPage />} />
           <Route path="/sites/:siteId/layout/edit" element={<LayoutEditorPage />} />
         </Routes>
-      </main>
-    </div>
+    </AppFrame>
   );
 }
