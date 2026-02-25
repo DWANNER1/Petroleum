@@ -31,6 +31,26 @@ async function request(path, options = {}) {
 export const api = {
   getSites: () => request("/sites"),
   getSite: (siteId) => request(`/sites/${siteId}`),
+  createSite: (payload) =>
+    request("/sites", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateIntegrations: (siteId, payload) =>
+    request(`/sites/${siteId}/integrations`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  addTank: (siteId, payload) =>
+    request(`/sites/${siteId}/tanks`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  addPump: (siteId, payload) =>
+    request(`/sites/${siteId}/pumps`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   getLayout: (siteId) => request(`/sites/${siteId}/layout`),
   saveLayout: (siteId, payload) =>
     request(`/sites/${siteId}/layout`, {

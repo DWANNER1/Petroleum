@@ -6,6 +6,7 @@ import { WorkQueuePage } from "./pages/WorkQueuePage";
 import { SiteDetailPage } from "./pages/SiteDetailPage";
 import { LayoutPage } from "./pages/LayoutPage";
 import { LayoutEditorPage } from "./pages/LayoutEditorPage";
+import { AdminPage } from "./pages/AdminPage";
 
 function AppFrame({ children }) {
   const location = useLocation();
@@ -23,6 +24,9 @@ function AppFrame({ children }) {
           </NavLink>
           <NavLink to="/work-queue" className={({ isActive }) => (isActive ? "active" : "")}>
             Work Queue
+          </NavLink>
+          <NavLink to="/admin" className={({ isActive }) => (isActive ? "active" : "")}>
+            Admin
           </NavLink>
         </nav>
       </aside>
@@ -61,6 +65,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/portfolio" replace />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/work-queue" element={<WorkQueuePage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="/sites/:siteId" element={<SiteDetailPage />} />
           <Route path="/sites/:siteId/layout" element={<LayoutPage />} />
           <Route path="/sites/:siteId/layout/edit" element={<LayoutEditorPage />} />
