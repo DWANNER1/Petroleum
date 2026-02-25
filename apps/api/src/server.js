@@ -3,7 +3,7 @@ const cors = require("cors");
 const { authMiddleware, encodeToken } = require("./auth");
 const { requireAuth, requireSiteAccess, requireRole } = require("./rbac");
 const { registerClient, sendEvent, broadcast } = require("./events");
-const { query, initDb } = require("./db");
+const { query, initDb, hasDbConfig } = require("./db");
 const { seedIfEmpty } = require("./seed");
 
 const app = express();
@@ -111,7 +111,7 @@ async function summariesForSiteIds(ids) {
 }
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "petroleum-api" });
+  res.json({ ok: true, service: "petroleum-api", dbConfigured: hasDbConfig() });
 });
 
 app.post(
@@ -809,16 +809,28 @@ app.use((error, _req, res, _next) => {
 });
 
 async function start() {
-  await initDb();
-  const seeded = await seedIfEmpty();
-  if (seeded) {
-    console.log("Database was empty; sample seed data inserted.");
+  let dbReady = false;
+  if (!hasDbConfig()) {
+    console.error(
+      "Postgres connection is missing. Set DATABASE_URL or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE."
+    );
+  } else {
+    await initDb();
+    const seeded = await seedIfEmpty();
+    if (seeded) {
+      console.log("Database was empty; sample seed data inserted.");
+    }
+    dbReady = true;
   }
-  setInterval(() => {
-    runSimulatorTick().catch((error) => console.error("Simulator tick error:", error.message));
-  }, 5000);
+
+  if (dbReady) {
+    setInterval(() => {
+      runSimulatorTick().catch((error) => console.error("Simulator tick error:", error.message));
+    }, 5000);
+  }
+
   app.listen(port, () => {
-    console.log(`petroleum-api listening on ${port}`);
+    console.log(`petroleum-api listening on ${port} (dbReady=${dbReady})`);
   });
 }
 

@@ -16,23 +16,33 @@ function resolveConnectionString() {
 }
 
 const connectionString = resolveConnectionString();
-if (!connectionString) {
-  throw new Error(
-    "Postgres connection is missing. Set DATABASE_URL or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE."
-  );
+let pool = null;
+
+function hasDbConfig() {
+  return !!connectionString;
 }
 
-const pool = new Pool({
-  connectionString,
-  ssl: process.env.PGSSL === "disable" ? false : { rejectUnauthorized: false }
-});
+function getPool() {
+  if (!hasDbConfig()) {
+    throw new Error(
+      "Postgres connection is missing. Set DATABASE_URL or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE."
+    );
+  }
+  if (!pool) {
+    pool = new Pool({
+      connectionString,
+      ssl: process.env.PGSSL === "disable" ? false : { rejectUnauthorized: false }
+    });
+  }
+  return pool;
+}
 
 async function query(text, params = []) {
-  return pool.query(text, params);
+  return getPool().query(text, params);
 }
 
 async function tx(run) {
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     const result = await run(client);
@@ -195,7 +205,7 @@ async function initDb() {
 }
 
 module.exports = {
-  pool,
+  hasDbConfig,
   query,
   tx,
   initDb
