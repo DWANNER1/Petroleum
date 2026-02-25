@@ -1,0 +1,8 @@
+[build]
+  command = "npm install && npm --workspace apps/web run build"
+  publish = "apps/web/dist"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

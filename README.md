@@ -10,7 +10,7 @@ MVP scaffold for a multi-site gas station monitoring platform based on:
 
 - `apps/web`: React + Vite dashboard
 - `apps/api`: Node.js + Express API + SSE
-- `apps/worker`: Node.js simulator worker
+- `apps/worker`: Node.js simulator worker (local/dev)
 - `data/store.json`: JSON persistence file used by API/worker
 
 ## Quick Start (Local)
@@ -44,19 +44,32 @@ Demo users:
 - Service Tech: `tech@demo.com` / `demo123`
 - Operator: `operator@demo.com` / `demo123`
 
-## Render Deployment
+## Deployment (Free): Netlify + Railway
 
-This repo includes `render.yaml` with:
+### API on Railway
 
-- API web service
-- Web static site
-- Worker background service
+1. In Railway, create a new project from this GitHub repo.
+2. Set service root to repository root (default).
+3. Railway reads `railway.json` and uses:
+   - Build: `npm install && npm --workspace apps/api run build`
+   - Start: `npm --workspace apps/api run start`
+4. After first deploy, copy the API URL (for example `https://petroleum-api-production.up.railway.app`).
 
-Deploy with Render Blueprint using this repository.
+### Web on Netlify
+
+1. In Netlify, import this repository.
+2. Build settings:
+   - Base directory: *(leave empty)*
+   - Build command: `npm install && npm --workspace apps/web run build`
+   - Publish directory: `apps/web/dist`
+3. Add environment variable:
+   - `VITE_API_BASE_URL` = your Railway API URL
+4. Deploy site.
+
+`netlify.toml` is included with SPA redirect support.
 
 ## Notes
 
 - Auth/JWT is simplified for MVP scaffold.
 - Ingestion protocols (ATG/Gilbarco) are simulator-only in this iteration.
-- Forecourt layout editor is a next-phase task; viewer is implemented.
-This is a gas station support tool
+- Forecourt layout editor and layout version save are implemented in MVP form.
