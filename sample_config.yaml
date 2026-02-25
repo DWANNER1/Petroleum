@@ -18,6 +18,7 @@ sites:
   - site_code: "1032"
     name: "Station 1032"
     address: "123 Main St"
+    postal_code: "10001"
     region: "North"
     lat: 45.4215
     lon: -75.6972

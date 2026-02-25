@@ -59,14 +59,15 @@ async function seedDatabase() {
       const siteId = `site-${site.site_code}`;
       siteIds.push(siteId);
       await client.query(
-        `INSERT INTO sites(id, org_id, site_code, name, address, region, lat, lon, timezone, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO sites(id, org_id, site_code, name, address, postal_code, region, lat, lon, timezone, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           siteId,
           orgId,
           site.site_code,
           site.name,
           site.address || "",
+          site.postal_code || site.zip || "",
           site.region || "",
           Number(site.lat || 0),
           Number(site.lon || 0),

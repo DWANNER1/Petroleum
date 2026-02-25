@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { SiteMap } from "../components/SiteMap";
 
 export function PortfolioPage() {
   const [sites, setSites] = useState([]);
@@ -51,25 +52,14 @@ export function PortfolioPage() {
             <h3>Portfolio Map</h3>
             <span>Map-first overview</span>
           </div>
-          <div className="mock-map">
-            {sites.map((site) => (
-              <button
-                key={site.id}
-                className={`map-pin ${selectedSite?.id === site.id ? "map-pin-active" : ""}`}
-                style={{
-                  left: `${20 + ((site.lon + 180) % 60)}%`,
-                  top: `${20 + ((site.lat + 90) % 50)}%`
-                }}
-                onClick={() => setSelectedSite(site)}
-              >
-                {site.criticalCount > 0 ? "!" : "OK"}
-              </button>
-            ))}
-          </div>
+          <SiteMap sites={sites} selectedSiteId={selectedSite?.id} onSelect={setSelectedSite} />
           {selectedSite && (
             <div className="drawer">
               <div className="drawer-title">{selectedSite.name}</div>
               <div>Site Code: {selectedSite.siteCode}</div>
+              <div>
+                Address: {selectedSite.address || "n/a"} {selectedSite.postalCode || ""}
+              </div>
               <div>
                 Pump Sides: {selectedSite.pumpSidesConnected}/{selectedSite.pumpSidesExpected}
               </div>

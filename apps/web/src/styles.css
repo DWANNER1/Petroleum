@@ -265,20 +265,11 @@ select {
     );
 }
 
-.map-pin {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  border: 1px solid #20435a;
-  background: #fbfcfd;
-  font-weight: 700;
-}
-
-.map-pin-active {
-  background: #20435a;
-  color: #ffffff;
+.real-map {
+  height: 360px;
+  border: 1px solid #9eb7c6;
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .drawer {
@@ -375,6 +366,15 @@ select {
   border-color: #8ac5a2;
   background: #e8f7ee;
   color: #1d6a3f;
+}
+
+.admin-warning {
+  margin-top: 10px;
+  color: #8a5b08;
+}
+
+.grid-disabled {
+  opacity: 0.75;
 }
 
 @media (max-width: 1024px) {

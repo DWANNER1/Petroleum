@@ -39,7 +39,7 @@ export function SiteDetailPage() {
           <h3>{site.name}</h3>
           <span>{site.siteCode} | {site.region}</span>
         </div>
-        <div>Address: {site.address}</div>
+        <div>Address: {site.address} {site.postalCode || ""}</div>
         <div>ATG Host: {site.integration?.atgHost || "-"}</div>
         <div>ATG Poll: {site.integration?.atgPollIntervalSec || "-"} sec</div>
         <div>Pump Connectivity: {site.pumpSidesConnected}/{site.pumpSidesExpected}</div>

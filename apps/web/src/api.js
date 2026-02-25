@@ -36,6 +36,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  updateSite: (siteId, payload) =>
+    request(`/sites/${siteId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
   updateIntegrations: (siteId, payload) =>
     request(`/sites/${siteId}/integrations`, {
       method: "PATCH",

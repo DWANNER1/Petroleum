@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 
-const emptySiteForm = {
+const emptyCreateSiteForm = {
   siteCode: "",
   name: "",
   address: "",
-  region: "",
-  lat: "",
-  lon: ""
+  postalCode: "",
+  region: ""
+};
+
+const emptyEditSiteForm = {
+  name: "",
+  address: "",
+  postalCode: "",
+  region: ""
 };
 
 const emptyTankForm = {
@@ -28,7 +34,8 @@ const emptyPumpForm = {
 export function AdminPage() {
   const [sites, setSites] = useState([]);
   const [selectedSiteId, setSelectedSiteId] = useState("");
-  const [siteForm, setSiteForm] = useState(emptySiteForm);
+  const [createSiteForm, setCreateSiteForm] = useState(emptyCreateSiteForm);
+  const [editSiteForm, setEditSiteForm] = useState(emptyEditSiteForm);
   const [integrationForm, setIntegrationForm] = useState({
     atgHost: "",
     atgPort: "10001",
@@ -43,7 +50,6 @@ export function AdminPage() {
     try {
       const rows = await api.getSites();
       setSites(rows);
-      if (!selectedSiteId && rows.length > 0) setSelectedSiteId(rows[0].id);
     } catch (err) {
       setError(err.message);
     }
@@ -58,6 +64,12 @@ export function AdminPage() {
     api
       .getSite(selectedSiteId)
       .then((site) => {
+        setEditSiteForm({
+          name: site.name || "",
+          address: site.address || "",
+          postalCode: site.postalCode || "",
+          region: site.region || ""
+        });
         setIntegrationForm({
           atgHost: site.integration?.atgHost || "",
           atgPort: String(site.integration?.atgPort || 10001),
@@ -72,21 +84,24 @@ export function AdminPage() {
     [sites, selectedSiteId]
   );
 
-  async function submitCreateSite(e) {
-    e.preventDefault();
+  function clearStatus() {
     setError("");
     setMessage("");
+  }
+
+  async function submitCreateSite(e) {
+    e.preventDefault();
+    clearStatus();
     try {
       const created = await api.createSite({
-        siteCode: siteForm.siteCode.trim(),
-        name: siteForm.name.trim(),
-        address: siteForm.address.trim(),
-        region: siteForm.region.trim(),
-        lat: Number(siteForm.lat || 0),
-        lon: Number(siteForm.lon || 0)
+        siteCode: createSiteForm.siteCode.trim(),
+        name: createSiteForm.name.trim(),
+        address: createSiteForm.address.trim(),
+        postalCode: createSiteForm.postalCode.trim(),
+        region: createSiteForm.region.trim()
       });
-      setMessage(`Created site ${created.name} (${created.id})`);
-      setSiteForm(emptySiteForm);
+      setMessage(`Created site ${created.name} (${created.id}).`);
+      setCreateSiteForm(emptyCreateSiteForm);
       await loadSites();
       setSelectedSiteId(created.id);
     } catch (err) {
@@ -94,10 +109,34 @@ export function AdminPage() {
     }
   }
 
+  async function submitEditSite(e) {
+    e.preventDefault();
+    clearStatus();
+    if (!selectedSiteId) {
+      setError("Select a station before editing station information.");
+      return;
+    }
+    try {
+      await api.updateSite(selectedSiteId, {
+        name: editSiteForm.name.trim(),
+        address: editSiteForm.address.trim(),
+        postalCode: editSiteForm.postalCode.trim(),
+        region: editSiteForm.region.trim()
+      });
+      setMessage("Station information updated.");
+      await loadSites();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function submitIntegration(e) {
     e.preventDefault();
-    setError("");
-    setMessage("");
+    clearStatus();
+    if (!selectedSiteId) {
+      setError("Select a station before updating integration settings.");
+      return;
+    }
     try {
       await api.updateIntegrations(selectedSiteId, {
         atgHost: integrationForm.atgHost.trim(),
@@ -112,8 +151,11 @@ export function AdminPage() {
 
   async function submitTank(e) {
     e.preventDefault();
-    setError("");
-    setMessage("");
+    clearStatus();
+    if (!selectedSiteId) {
+      setError("Select a station before adding tanks.");
+      return;
+    }
     try {
       await api.addTank(selectedSiteId, {
         atgTankId: tankForm.atgTankId.trim(),
@@ -130,8 +172,11 @@ export function AdminPage() {
 
   async function submitPump(e) {
     e.preventDefault();
-    setError("");
-    setMessage("");
+    clearStatus();
+    if (!selectedSiteId) {
+      setError("Select a station before adding pumps.");
+      return;
+    }
     try {
       await api.addPump(selectedSiteId, {
         pumpNumber: Number(pumpForm.pumpNumber || 0),
@@ -152,168 +197,211 @@ export function AdminPage() {
     <div className="admin-page">
       <div className="section-header">
         <h3>Admin</h3>
-        <span>Create and configure stations/assets from GUI</span>
+        <span>Create and manage stations from GUI</span>
       </div>
       {message && <div className="card admin-success">{message}</div>}
       {error && <div className="card severity-critical">{error}</div>}
 
       <div className="grid">
         <section className="card">
-          <h3>Create Site</h3>
+          <h3>Create Station</h3>
           <form className="admin-form" onSubmit={submitCreateSite}>
             <input
               placeholder="Site Code (e.g. 1040)"
-              value={siteForm.siteCode}
-              onChange={(e) => setSiteForm((f) => ({ ...f, siteCode: e.target.value }))}
+              value={createSiteForm.siteCode}
+              onChange={(e) => setCreateSiteForm((f) => ({ ...f, siteCode: e.target.value }))}
               required
             />
             <input
-              placeholder="Site Name"
-              value={siteForm.name}
-              onChange={(e) => setSiteForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Station Name"
+              value={createSiteForm.name}
+              onChange={(e) => setCreateSiteForm((f) => ({ ...f, name: e.target.value }))}
               required
             />
             <input
-              placeholder="Address"
-              value={siteForm.address}
-              onChange={(e) => setSiteForm((f) => ({ ...f, address: e.target.value }))}
+              placeholder="Street/City/State Address"
+              value={createSiteForm.address}
+              onChange={(e) => setCreateSiteForm((f) => ({ ...f, address: e.target.value }))}
+              required
+            />
+            <input
+              placeholder="ZIP Code"
+              value={createSiteForm.postalCode}
+              onChange={(e) => setCreateSiteForm((f) => ({ ...f, postalCode: e.target.value }))}
+              required
             />
             <input
               placeholder="Region"
-              value={siteForm.region}
-              onChange={(e) => setSiteForm((f) => ({ ...f, region: e.target.value }))}
+              value={createSiteForm.region}
+              onChange={(e) => setCreateSiteForm((f) => ({ ...f, region: e.target.value }))}
             />
-            <div className="inline">
-              <input
-                placeholder="Latitude"
-                value={siteForm.lat}
-                onChange={(e) => setSiteForm((f) => ({ ...f, lat: e.target.value }))}
-              />
-              <input
-                placeholder="Longitude"
-                value={siteForm.lon}
-                onChange={(e) => setSiteForm((f) => ({ ...f, lon: e.target.value }))}
-              />
-            </div>
-            <button type="submit">Create Site</button>
+            <button type="submit">Create Station</button>
           </form>
         </section>
 
         <section className="card">
-          <h3>Manage Existing Site</h3>
+          <h3>Select Station</h3>
           <select value={selectedSiteId} onChange={(e) => setSelectedSiteId(e.target.value)}>
+            <option value="">Select station...</option>
             {sites.map((site) => (
               <option key={site.id} value={site.id}>
                 {site.name} ({site.siteCode})
               </option>
             ))}
           </select>
-          {selectedSite && (
+          {selectedSite ? (
             <div className="admin-meta">
               <div><strong>{selectedSite.name}</strong></div>
               <div>{selectedSite.id}</div>
               <div>{selectedSite.address}</div>
+              <div>{selectedSite.postalCode || "ZIP n/a"}</div>
             </div>
+          ) : (
+            <div className="admin-warning">You must select a station before editing station, pump, tank, or integration data.</div>
           )}
         </section>
       </div>
 
-      {selectedSiteId && (
-        <div className="grid">
-          <section className="card">
-            <h3>Integration Settings</h3>
-            <form className="admin-form" onSubmit={submitIntegration}>
-              <input
-                placeholder="ATG Host"
-                value={integrationForm.atgHost}
-                onChange={(e) => setIntegrationForm((f) => ({ ...f, atgHost: e.target.value }))}
-              />
-              <div className="inline">
-                <input
-                  placeholder="ATG Port"
-                  value={integrationForm.atgPort}
-                  onChange={(e) => setIntegrationForm((f) => ({ ...f, atgPort: e.target.value }))}
-                />
-                <input
-                  placeholder="Poll Interval (sec)"
-                  value={integrationForm.atgPollIntervalSec}
-                  onChange={(e) =>
-                    setIntegrationForm((f) => ({ ...f, atgPollIntervalSec: e.target.value }))
-                  }
-                />
-              </div>
-              <button type="submit">Save Integrations</button>
-            </form>
-          </section>
+      <div className={`grid ${!selectedSiteId ? "grid-disabled" : ""}`}>
+        <section className="card">
+          <h3>Edit Station Info</h3>
+          <form className="admin-form" onSubmit={submitEditSite}>
+            <input
+              placeholder="Station Name"
+              value={editSiteForm.name}
+              onChange={(e) => setEditSiteForm((f) => ({ ...f, name: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Street/City/State Address"
+              value={editSiteForm.address}
+              onChange={(e) => setEditSiteForm((f) => ({ ...f, address: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="ZIP Code"
+              value={editSiteForm.postalCode}
+              onChange={(e) => setEditSiteForm((f) => ({ ...f, postalCode: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Region"
+              value={editSiteForm.region}
+              onChange={(e) => setEditSiteForm((f) => ({ ...f, region: e.target.value }))}
+              disabled={!selectedSiteId}
+            />
+            <button type="submit" disabled={!selectedSiteId}>Save Station</button>
+          </form>
+        </section>
 
-          <section className="card">
-            <h3>Add Tank</h3>
-            <form className="admin-form" onSubmit={submitTank}>
+        <section className="card">
+          <h3>Integration Settings</h3>
+          <form className="admin-form" onSubmit={submitIntegration}>
+            <input
+              placeholder="ATG Host"
+              value={integrationForm.atgHost}
+              onChange={(e) => setIntegrationForm((f) => ({ ...f, atgHost: e.target.value }))}
+              disabled={!selectedSiteId}
+            />
+            <div className="inline">
               <input
-                placeholder="ATG Tank ID"
-                value={tankForm.atgTankId}
-                onChange={(e) => setTankForm((f) => ({ ...f, atgTankId: e.target.value }))}
-                required
+                placeholder="ATG Port"
+                value={integrationForm.atgPort}
+                onChange={(e) => setIntegrationForm((f) => ({ ...f, atgPort: e.target.value }))}
+                disabled={!selectedSiteId}
               />
               <input
-                placeholder="Tank Label"
-                value={tankForm.label}
-                onChange={(e) => setTankForm((f) => ({ ...f, label: e.target.value }))}
-                required
+                placeholder="Poll Interval (sec)"
+                value={integrationForm.atgPollIntervalSec}
+                onChange={(e) =>
+                  setIntegrationForm((f) => ({ ...f, atgPollIntervalSec: e.target.value }))
+                }
+                disabled={!selectedSiteId}
               />
-              <input
-                placeholder="Product (Regular/Premium/etc)"
-                value={tankForm.product}
-                onChange={(e) => setTankForm((f) => ({ ...f, product: e.target.value }))}
-                required
-              />
-              <input
-                placeholder="Capacity Liters"
-                value={tankForm.capacityLiters}
-                onChange={(e) => setTankForm((f) => ({ ...f, capacityLiters: e.target.value }))}
-                required
-              />
-              <button type="submit">Add Tank</button>
-            </form>
-          </section>
+            </div>
+            <button type="submit" disabled={!selectedSiteId}>Save Integrations</button>
+          </form>
+        </section>
 
-          <section className="card">
-            <h3>Add Pump</h3>
-            <form className="admin-form" onSubmit={submitPump}>
-              <input
-                placeholder="Pump Number"
-                value={pumpForm.pumpNumber}
-                onChange={(e) => setPumpForm((f) => ({ ...f, pumpNumber: e.target.value }))}
-                required
-              />
-              <input
-                placeholder="Pump Label"
-                value={pumpForm.label}
-                onChange={(e) => setPumpForm((f) => ({ ...f, label: e.target.value }))}
-                required
-              />
-              <input
-                placeholder="Side A IP"
-                value={pumpForm.sideAip}
-                onChange={(e) => setPumpForm((f) => ({ ...f, sideAip: e.target.value }))}
-                required
-              />
-              <input
-                placeholder="Side B IP"
-                value={pumpForm.sideBip}
-                onChange={(e) => setPumpForm((f) => ({ ...f, sideBip: e.target.value }))}
-                required
-              />
-              <input
-                placeholder="Port"
-                value={pumpForm.port}
-                onChange={(e) => setPumpForm((f) => ({ ...f, port: e.target.value }))}
-              />
-              <button type="submit">Add Pump</button>
-            </form>
-          </section>
-        </div>
-      )}
+        <section className="card">
+          <h3>Add Tank</h3>
+          <form className="admin-form" onSubmit={submitTank}>
+            <input
+              placeholder="ATG Tank ID"
+              value={tankForm.atgTankId}
+              onChange={(e) => setTankForm((f) => ({ ...f, atgTankId: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Tank Label"
+              value={tankForm.label}
+              onChange={(e) => setTankForm((f) => ({ ...f, label: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Product (Regular/Premium/etc)"
+              value={tankForm.product}
+              onChange={(e) => setTankForm((f) => ({ ...f, product: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Capacity Liters"
+              value={tankForm.capacityLiters}
+              onChange={(e) => setTankForm((f) => ({ ...f, capacityLiters: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <button type="submit" disabled={!selectedSiteId}>Add Tank</button>
+          </form>
+        </section>
+
+        <section className="card">
+          <h3>Add Pump</h3>
+          <form className="admin-form" onSubmit={submitPump}>
+            <input
+              placeholder="Pump Number"
+              value={pumpForm.pumpNumber}
+              onChange={(e) => setPumpForm((f) => ({ ...f, pumpNumber: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Pump Label"
+              value={pumpForm.label}
+              onChange={(e) => setPumpForm((f) => ({ ...f, label: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Side A IP"
+              value={pumpForm.sideAip}
+              onChange={(e) => setPumpForm((f) => ({ ...f, sideAip: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Side B IP"
+              value={pumpForm.sideBip}
+              onChange={(e) => setPumpForm((f) => ({ ...f, sideBip: e.target.value }))}
+              required
+              disabled={!selectedSiteId}
+            />
+            <input
+              placeholder="Port"
+              value={pumpForm.port}
+              onChange={(e) => setPumpForm((f) => ({ ...f, port: e.target.value }))}
+              disabled={!selectedSiteId}
+            />
+            <button type="submit" disabled={!selectedSiteId}>Add Pump</button>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }

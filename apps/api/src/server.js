@@ -54,6 +54,7 @@ async function summariesForSiteIds(ids) {
       site_code AS "siteCode",
       name,
       address,
+      postal_code AS "postalCode",
       region,
       lat,
       lon
@@ -224,14 +225,15 @@ app.post(
 
     await query(
       `INSERT INTO sites(
-        id, org_id, site_code, name, address, region, lat, lon, timezone, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        id, org_id, site_code, name, address, postal_code, region, lat, lon, timezone, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         siteId,
         req.user.orgId,
         body.siteCode,
         body.name,
         body.address || "",
+        body.postalCode || "",
         body.region || "",
         Number(body.lat || 0),
         Number(body.lon || 0),
@@ -269,7 +271,7 @@ app.post(
     );
 
     const created = await query(
-      `SELECT id, site_code AS "siteCode", name, address, region, lat, lon
+      `SELECT id, site_code AS "siteCode", name, address, postal_code AS "postalCode", region, lat, lon
        FROM sites WHERE id=$1`,
       [siteId]
     );
@@ -286,18 +288,19 @@ app.patch(
     const body = req.body || {};
     const now = new Date().toISOString();
     const current = await query(
-      `SELECT id, name, address, region, lat, lon FROM sites WHERE id=$1`,
+      `SELECT id, name, address, postal_code AS "postalCode", region, lat, lon FROM sites WHERE id=$1`,
       [req.params.id]
     );
     if (current.rowCount === 0) return res.status(404).json({ error: "Site not found" });
     const before = current.rows[0];
     await query(
       `UPDATE sites SET
-        name=$1, address=$2, region=$3, lat=$4, lon=$5, updated_at=$6
-       WHERE id=$7`,
+        name=$1, address=$2, postal_code=$3, region=$4, lat=$5, lon=$6, updated_at=$7
+       WHERE id=$8`,
       [
         body.name ?? before.name,
         body.address ?? before.address,
+        body.postalCode ?? before.postalCode,
         body.region ?? before.region,
         body.lat ?? before.lat,
         body.lon ?? before.lon,
@@ -321,6 +324,7 @@ app.patch(
         JSON.stringify({
           name: body.name ?? before.name,
           address: body.address ?? before.address,
+          postalCode: body.postalCode ?? before.postalCode,
           region: body.region ?? before.region,
           lat: body.lat ?? before.lat,
           lon: body.lon ?? before.lon
@@ -330,7 +334,7 @@ app.patch(
       ]
     );
     const updated = await query(
-      `SELECT id, site_code AS "siteCode", name, address, region, lat, lon
+      `SELECT id, site_code AS "siteCode", name, address, postal_code AS "postalCode", region, lat, lon
        FROM sites WHERE id=$1`,
       [req.params.id]
     );

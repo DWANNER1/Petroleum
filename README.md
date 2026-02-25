@@ -84,3 +84,4 @@ Demo users:
 - API data is durable only when backed by PostgreSQL (`DATABASE_URL`).
 - Ingestion protocols (ATG/Gilbarco) are simulator-only in this iteration.
 - Forecourt layout editor and layout version save are implemented in MVP form.
+- Portfolio map uses OpenStreetMap tiles and geocodes sites from `address + postal_code`.

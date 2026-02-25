@@ -202,6 +202,11 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL
     );
   `);
+
+  await query(`
+    ALTER TABLE sites
+    ADD COLUMN IF NOT EXISTS postal_code TEXT NOT NULL DEFAULT '';
+  `);
 }
 
 module.exports = {
