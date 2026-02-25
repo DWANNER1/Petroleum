@@ -9,9 +9,12 @@ MVP scaffold for a multi-site gas station monitoring platform based on:
 ## Stack
 
 - `apps/web`: React + Vite dashboard
-- `apps/api`: Node.js + Express API + SSE
+- `apps/api`: Node.js + Express API + SSE + PostgreSQL
 - `apps/worker`: Node.js simulator worker (local/dev)
-- `data/store.json`: JSON persistence file used by API/worker
+
+## Database
+
+The API requires `DATABASE_URL` and persists all app data in PostgreSQL.
 
 ## Quick Start (Local)
 
@@ -25,6 +28,12 @@ npm install
 
 ```bash
 npm run seed
+```
+
+2a. Set a local database URL before seeding/running API:
+
+```bash
+set DATABASE_URL=postgres://postgres:postgres@localhost:5432/petroleum
 ```
 
 3. Start all apps:
@@ -53,7 +62,8 @@ Demo users:
 3. Railway reads `railway.json` and uses:
    - Build: `npm install && npm --workspace apps/api run build`
    - Start: `npm --workspace apps/api run start`
-4. After first deploy, copy the API URL (for example `https://petroleum-api-production.up.railway.app`).
+4. Add a PostgreSQL service in Railway and attach/connect it to the API service so `DATABASE_URL` is available.
+5. After first deploy, copy the API URL (for example `https://petroleum-api-production.up.railway.app`).
 
 ### Web on Netlify
 
@@ -71,5 +81,6 @@ Demo users:
 ## Notes
 
 - Auth/JWT is simplified for MVP scaffold.
+- API data is durable only when backed by PostgreSQL (`DATABASE_URL`).
 - Ingestion protocols (ATG/Gilbarco) are simulator-only in this iteration.
 - Forecourt layout editor and layout version save are implemented in MVP form.

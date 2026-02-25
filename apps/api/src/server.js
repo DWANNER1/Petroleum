@@ -1,10 +1,10 @@
 const express = require("express");
 const cors = require("cors");
 const { authMiddleware, encodeToken } = require("./auth");
-const { readStore, withStore, writeStore } = require("./store");
-const { buildSeedStore } = require("./seed");
-const { requireAuth, requireSiteAccess, requireRole, canAccessSite } = require("./rbac");
+const { requireAuth, requireSiteAccess, requireRole } = require("./rbac");
 const { registerClient, sendEvent, broadcast } = require("./events");
+const { query, initDb } = require("./db");
+const { seedIfEmpty } = require("./seed");
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -13,399 +13,706 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 app.use(authMiddleware);
 
-function ensureStore() {
-  let store = readStore();
-  if (!store) {
-    store = buildSeedStore();
-    writeStore(store);
+function asyncHandler(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
+function id(prefix) {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+async function siteIdsForUser(user) {
+  if (user.role === "manager") {
+    const all = await query("SELECT id FROM sites");
+    return all.rows.map((r) => r.id);
   }
-  return store;
+  return user.siteIds || [];
 }
 
-function currentUserRecord(store, req) {
-  if (!req.user) return null;
-  return store.users.find((u) => u.id === req.user.userId) || null;
-}
-
-function siteSummary(store, site) {
-  const siteAlerts = store.alerts.filter((a) => a.siteId === site.id && a.state === "raised");
-  const criticalCount = siteAlerts.filter((a) => a.severity === "critical").length;
-  const warnCount = siteAlerts.filter((a) => a.severity === "warn").length;
-  const sides = store.pumpSides.filter((ps) => {
-    const pump = store.pumps.find((p) => p.id === ps.pumpId);
-    return pump?.siteId === site.id;
-  });
-  const sideIds = new Set(sides.map((s) => s.id));
-  const sideConn = store.connectionStatus.filter(
-    (c) => c.kind === "pump_side" && sideIds.has(c.targetId)
+async function hydrateUserWithSites(userId) {
+  const userResult = await query(
+    "SELECT id, org_id AS \"orgId\", email, name, role FROM users WHERE id=$1",
+    [userId]
   );
-  const atgConn = store.connectionStatus.find((c) => c.kind === "atg" && c.siteId === site.id);
+  if (userResult.rowCount === 0) return null;
+  const sitesResult = await query(
+    "SELECT site_id AS \"siteId\" FROM user_site_assignments WHERE user_id=$1",
+    [userId]
+  );
   return {
-    id: site.id,
-    siteCode: site.siteCode,
-    name: site.name,
-    address: site.address,
-    region: site.region,
-    lat: site.lat,
-    lon: site.lon,
-    criticalCount,
-    warnCount,
-    pumpSidesConnected: sideConn.filter((c) => c.status === "connected").length,
-    pumpSidesExpected: sideConn.length,
-    atgLastSeenAt: atgConn?.lastSeenAt || null
+    ...userResult.rows[0],
+    siteIds: sitesResult.rows.map((r) => r.siteId)
   };
+}
+
+async function summariesForSiteIds(ids) {
+  if (!ids.length) return [];
+
+  const sites = await query(
+    `SELECT
+      id,
+      site_code AS "siteCode",
+      name,
+      address,
+      region,
+      lat,
+      lon
+    FROM sites
+    WHERE id = ANY($1::text[])
+    ORDER BY site_code`,
+    [ids]
+  );
+
+  const alerts = await query(
+    `SELECT
+      site_id AS "siteId",
+      COUNT(*) FILTER (WHERE state='raised' AND severity='critical')::int AS "criticalCount",
+      COUNT(*) FILTER (WHERE state='raised' AND severity='warn')::int AS "warnCount"
+    FROM alarm_events
+    WHERE site_id = ANY($1::text[])
+    GROUP BY site_id`,
+    [ids]
+  );
+
+  const connectivity = await query(
+    `SELECT
+      p.site_id AS "siteId",
+      COUNT(ps.id)::int AS "pumpSidesExpected",
+      COUNT(ps.id) FILTER (WHERE cs.status='connected')::int AS "pumpSidesConnected"
+    FROM pumps p
+    JOIN pump_sides ps ON ps.pump_id = p.id
+    LEFT JOIN connection_status cs
+      ON cs.target_id = ps.id AND cs.kind='pump_side'
+    WHERE p.site_id = ANY($1::text[])
+    GROUP BY p.site_id`,
+    [ids]
+  );
+
+  const atg = await query(
+    `SELECT site_id AS "siteId", MAX(last_seen_at) AS "atgLastSeenAt"
+     FROM connection_status
+     WHERE kind='atg' AND site_id = ANY($1::text[])
+     GROUP BY site_id`,
+    [ids]
+  );
+
+  const alertsBySite = new Map(alerts.rows.map((r) => [r.siteId, r]));
+  const connBySite = new Map(connectivity.rows.map((r) => [r.siteId, r]));
+  const atgBySite = new Map(atg.rows.map((r) => [r.siteId, r]));
+
+  return sites.rows.map((site) => ({
+    ...site,
+    criticalCount: alertsBySite.get(site.id)?.criticalCount || 0,
+    warnCount: alertsBySite.get(site.id)?.warnCount || 0,
+    pumpSidesConnected: connBySite.get(site.id)?.pumpSidesConnected || 0,
+    pumpSidesExpected: connBySite.get(site.id)?.pumpSidesExpected || 0,
+    atgLastSeenAt: atgBySite.get(site.id)?.atgLastSeenAt || null
+  }));
 }
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "petroleum-api" });
 });
 
-app.post("/auth/login", (req, res) => {
-  const store = ensureStore();
-  const { email, password } = req.body || {};
-  const user = store.users.find((u) => u.email === email && u.password === password);
-  if (!user) return res.status(401).json({ error: "Invalid credentials" });
-  const token = encodeToken({
-    userId: user.id,
-    role: user.role,
-    orgId: user.orgId,
-    siteIds: user.siteIds || []
-  });
-  return res.json({
-    token,
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
+app.post(
+  "/auth/login",
+  asyncHandler(async (req, res) => {
+    const { email, password } = req.body || {};
+    const userResult = await query(
+      "SELECT id, org_id AS \"orgId\", email, name, role FROM users WHERE email=$1 AND password=$2",
+      [email, password]
+    );
+    if (userResult.rowCount === 0) return res.status(401).json({ error: "Invalid credentials" });
+    const user = userResult.rows[0];
+    const siteRows = await query("SELECT site_id AS \"siteId\" FROM user_site_assignments WHERE user_id=$1", [
+      user.id
+    ]);
+    const siteIds = siteRows.rows.map((r) => r.siteId);
+    const token = encodeToken({
+      userId: user.id,
       role: user.role,
-      siteIds: user.siteIds || []
+      orgId: user.orgId,
+      siteIds
+    });
+    res.json({
+      token,
+      user: { ...user, siteIds }
+    });
+  })
+);
+
+app.get(
+  "/auth/me",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = await hydrateUserWithSites(req.user.userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user);
+  })
+);
+
+app.get(
+  "/sites",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const ids = await siteIdsForUser(req.user);
+    const summaries = await summariesForSiteIds(ids);
+    res.json(summaries);
+  })
+);
+
+app.get(
+  "/sites/:id",
+  requireAuth,
+  requireSiteAccess,
+  asyncHandler(async (req, res) => {
+    const summaries = await summariesForSiteIds([req.params.id]);
+    if (!summaries.length) return res.status(404).json({ error: "Site not found" });
+
+    const integration = await query(
+      `SELECT
+        site_id AS "siteId",
+        atg_host AS "atgHost",
+        atg_port AS "atgPort",
+        atg_poll_interval_sec AS "atgPollIntervalSec",
+        atg_timeout_sec AS "atgTimeoutSec",
+        atg_retries AS "atgRetries",
+        atg_stale_sec AS "atgStaleSec",
+        pump_timeout_sec AS "pumpTimeoutSec",
+        pump_keepalive_enabled AS "pumpKeepaliveEnabled",
+        pump_reconnect_enabled AS "pumpReconnectEnabled",
+        pump_stale_sec AS "pumpStaleSec"
+       FROM site_integrations WHERE site_id=$1`,
+      [req.params.id]
+    );
+    const tanks = await query(
+      `SELECT
+        id, site_id AS "siteId", atg_tank_id AS "atgTankId", label, product,
+        capacity_liters AS "capacityLiters", active
+      FROM tanks WHERE site_id=$1 ORDER BY atg_tank_id`,
+      [req.params.id]
+    );
+    const pumps = await query(
+      `SELECT id, site_id AS "siteId", pump_number AS "pumpNumber", label, active
+       FROM pumps WHERE site_id=$1 ORDER BY pump_number`,
+      [req.params.id]
+    );
+
+    res.json({
+      ...summaries[0],
+      integration: integration.rows[0] || null,
+      tanks: tanks.rows,
+      pumps: pumps.rows
+    });
+  })
+);
+
+app.post(
+  "/sites",
+  requireAuth,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    if (!body.siteCode || !body.name) {
+      return res.status(400).json({ error: "siteCode and name are required" });
     }
-  });
-});
+    const siteId = `site-${body.siteCode}`;
+    const now = new Date().toISOString();
 
-app.get("/auth/me", requireAuth, (req, res) => {
-  const store = ensureStore();
-  const user = currentUserRecord(store, req);
-  if (!user) return res.status(404).json({ error: "User not found" });
-  return res.json({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    role: user.role,
-    siteIds: user.siteIds || []
-  });
-});
+    const exists = await query("SELECT id FROM sites WHERE id=$1", [siteId]);
+    if (exists.rowCount > 0) return res.status(400).json({ error: "Site already exists" });
 
-app.get("/sites", requireAuth, (req, res) => {
-  const store = ensureStore();
-  const allowed = store.sites.filter((s) => canAccessSite(req.user, s.id));
-  return res.json(allowed.map((s) => siteSummary(store, s)));
-});
+    await query(
+      `INSERT INTO sites(
+        id, org_id, site_code, name, address, region, lat, lon, timezone, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        siteId,
+        req.user.orgId,
+        body.siteCode,
+        body.name,
+        body.address || "",
+        body.region || "",
+        Number(body.lat || 0),
+        Number(body.lon || 0),
+        body.timezone || "America/New_York",
+        now,
+        now
+      ]
+    );
 
-app.get("/sites/:id", requireAuth, requireSiteAccess, (req, res) => {
-  const store = ensureStore();
-  const site = store.sites.find((s) => s.id === req.params.id);
-  if (!site) return res.status(404).json({ error: "Site not found" });
-  return res.json({
-    ...siteSummary(store, site),
-    integration: store.integrations.find((i) => i.siteId === site.id) || null,
-    tanks: store.tanks.filter((t) => t.siteId === site.id),
-    pumps: store.pumps.filter((p) => p.siteId === site.id)
-  });
-});
+    await query(
+      `INSERT INTO site_integrations(
+        site_id, atg_host, atg_port, atg_poll_interval_sec, atg_timeout_sec, atg_retries, atg_stale_sec,
+        pump_timeout_sec, pump_keepalive_enabled, pump_reconnect_enabled, pump_stale_sec
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [siteId, "", 10001, 60, 5, 3, 180, 5, true, true, 180]
+    );
 
-app.post("/sites", requireAuth, requireRole("manager", "service_tech"), (req, res) => {
-  const body = req.body || {};
-  if (!body.siteCode || !body.name) {
-    return res.status(400).json({ error: "siteCode and name are required" });
-  }
-  const id = `site-${body.siteCode}`;
-  const now = new Date().toISOString();
-  const updated = withStore((store) => {
-    if (store.sites.some((s) => s.id === id)) {
-      throw new Error("Site already exists");
-    }
-    const site = {
-      id,
-      orgId: req.user.orgId,
-      siteCode: body.siteCode,
-      name: body.name,
-      address: body.address || "",
-      region: body.region || "",
-      lat: body.lat || 0,
-      lon: body.lon || 0,
-      timezone: body.timezone || "America/New_York",
-      createdAt: now,
-      updatedAt: now
-    };
-    store.sites.push(site);
-    store.integrations.push({
-      siteId: id,
-      atgHost: "",
-      atgPort: 10001,
-      atgPollIntervalSec: 60,
-      atgTimeoutSec: 5,
-      atgRetries: 3,
-      atgStaleSec: 180,
-      pumpTimeoutSec: 5,
-      pumpKeepaliveEnabled: true,
-      pumpReconnectEnabled: true,
-      pumpStaleSec: 180
-    });
-    store.auditLog.push({
-      id: `audit-${Date.now()}`,
-      orgId: req.user.orgId,
-      userId: req.user.userId,
-      siteId: id,
-      entityType: "site",
-      entityId: id,
-      action: "create",
-      beforeJson: null,
-      afterJson: site,
-      reason: body.reason || "",
-      createdAt: now
-    });
-    return store;
-  });
-  const site = updated.sites.find((s) => s.id === id);
-  return res.status(201).json(site);
-});
+    await query(
+      `INSERT INTO audit_log(
+        id, org_id, user_id, site_id, entity_type, entity_id, action, before_json, after_json, reason, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)`,
+      [
+        id("audit"),
+        req.user.orgId,
+        req.user.userId,
+        siteId,
+        "site",
+        siteId,
+        "create",
+        null,
+        JSON.stringify({ siteCode: body.siteCode, name: body.name }),
+        body.reason || "",
+        now
+      ]
+    );
 
-app.patch("/sites/:id", requireAuth, requireSiteAccess, requireRole("manager", "service_tech"), (req, res) => {
-  const body = req.body || {};
-  const now = new Date().toISOString();
-  const updated = withStore((store) => {
-    const site = store.sites.find((s) => s.id === req.params.id);
-    if (!site) throw new Error("Site not found");
-    const before = { ...site };
-    Object.assign(site, {
-      name: body.name ?? site.name,
-      address: body.address ?? site.address,
-      region: body.region ?? site.region,
-      lat: body.lat ?? site.lat,
-      lon: body.lon ?? site.lon,
-      updatedAt: now
-    });
-    store.auditLog.push({
-      id: `audit-${Date.now()}`,
-      orgId: req.user.orgId,
-      userId: req.user.userId,
-      siteId: site.id,
-      entityType: "site",
-      entityId: site.id,
-      action: "update",
-      beforeJson: before,
-      afterJson: site,
-      reason: body.reason || "",
-      createdAt: now
-    });
-    return store;
-  });
-  return res.json(updated.sites.find((s) => s.id === req.params.id));
-});
+    const created = await query(
+      `SELECT id, site_code AS "siteCode", name, address, region, lat, lon
+       FROM sites WHERE id=$1`,
+      [siteId]
+    );
+    res.status(201).json(created.rows[0]);
+  })
+);
 
-app.get("/sites/:id/integrations", requireAuth, requireSiteAccess, (req, res) => {
-  const store = ensureStore();
-  return res.json(store.integrations.find((i) => i.siteId === req.params.id) || null);
-});
+app.patch(
+  "/sites/:id",
+  requireAuth,
+  requireSiteAccess,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const now = new Date().toISOString();
+    const current = await query(
+      `SELECT id, name, address, region, lat, lon FROM sites WHERE id=$1`,
+      [req.params.id]
+    );
+    if (current.rowCount === 0) return res.status(404).json({ error: "Site not found" });
+    const before = current.rows[0];
+    await query(
+      `UPDATE sites SET
+        name=$1, address=$2, region=$3, lat=$4, lon=$5, updated_at=$6
+       WHERE id=$7`,
+      [
+        body.name ?? before.name,
+        body.address ?? before.address,
+        body.region ?? before.region,
+        body.lat ?? before.lat,
+        body.lon ?? before.lon,
+        now,
+        req.params.id
+      ]
+    );
+    await query(
+      `INSERT INTO audit_log(
+        id, org_id, user_id, site_id, entity_type, entity_id, action, before_json, after_json, reason, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11)`,
+      [
+        id("audit"),
+        req.user.orgId,
+        req.user.userId,
+        req.params.id,
+        "site",
+        req.params.id,
+        "update",
+        JSON.stringify(before),
+        JSON.stringify({
+          name: body.name ?? before.name,
+          address: body.address ?? before.address,
+          region: body.region ?? before.region,
+          lat: body.lat ?? before.lat,
+          lon: body.lon ?? before.lon
+        }),
+        body.reason || "",
+        now
+      ]
+    );
+    const updated = await query(
+      `SELECT id, site_code AS "siteCode", name, address, region, lat, lon
+       FROM sites WHERE id=$1`,
+      [req.params.id]
+    );
+    res.json(updated.rows[0]);
+  })
+);
+
+app.get(
+  "/sites/:id/integrations",
+  requireAuth,
+  requireSiteAccess,
+  asyncHandler(async (req, res) => {
+    const integration = await query(
+      `SELECT
+        site_id AS "siteId", atg_host AS "atgHost", atg_port AS "atgPort",
+        atg_poll_interval_sec AS "atgPollIntervalSec", atg_timeout_sec AS "atgTimeoutSec",
+        atg_retries AS "atgRetries", atg_stale_sec AS "atgStaleSec",
+        pump_timeout_sec AS "pumpTimeoutSec", pump_keepalive_enabled AS "pumpKeepaliveEnabled",
+        pump_reconnect_enabled AS "pumpReconnectEnabled", pump_stale_sec AS "pumpStaleSec"
+       FROM site_integrations WHERE site_id=$1`,
+      [req.params.id]
+    );
+    res.json(integration.rows[0] || null);
+  })
+);
 
 app.patch(
   "/sites/:id/integrations",
   requireAuth,
   requireSiteAccess,
   requireRole("manager", "service_tech"),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     const body = req.body || {};
     const now = new Date().toISOString();
-    const updated = withStore((store) => {
-      const integration = store.integrations.find((i) => i.siteId === req.params.id);
-      if (!integration) throw new Error("Integration not found");
-      const before = { ...integration };
-      Object.assign(integration, body);
-      store.auditLog.push({
-        id: `audit-${Date.now()}`,
-        orgId: req.user.orgId,
-        userId: req.user.userId,
-        siteId: req.params.id,
-        entityType: "site_integrations",
-        entityId: req.params.id,
-        action: "update",
-        beforeJson: before,
-        afterJson: integration,
-        reason: body.reason || "",
-        createdAt: now
-      });
-      return store;
-    });
-    return res.json(updated.integrations.find((i) => i.siteId === req.params.id));
-  }
+    const current = await query(
+      `SELECT * FROM site_integrations WHERE site_id=$1`,
+      [req.params.id]
+    );
+    if (current.rowCount === 0) return res.status(404).json({ error: "Integration not found" });
+    const c = current.rows[0];
+    await query(
+      `UPDATE site_integrations SET
+        atg_host=$1, atg_port=$2, atg_poll_interval_sec=$3, atg_timeout_sec=$4, atg_retries=$5,
+        atg_stale_sec=$6, pump_timeout_sec=$7, pump_keepalive_enabled=$8,
+        pump_reconnect_enabled=$9, pump_stale_sec=$10
+      WHERE site_id=$11`,
+      [
+        body.atgHost ?? c.atg_host,
+        body.atgPort ?? c.atg_port,
+        body.atgPollIntervalSec ?? c.atg_poll_interval_sec,
+        body.atgTimeoutSec ?? c.atg_timeout_sec,
+        body.atgRetries ?? c.atg_retries,
+        body.atgStaleSec ?? c.atg_stale_sec,
+        body.pumpTimeoutSec ?? c.pump_timeout_sec,
+        body.pumpKeepaliveEnabled ?? c.pump_keepalive_enabled,
+        body.pumpReconnectEnabled ?? c.pump_reconnect_enabled,
+        body.pumpStaleSec ?? c.pump_stale_sec,
+        req.params.id
+      ]
+    );
+    await query(
+      `INSERT INTO audit_log(
+        id, org_id, user_id, site_id, entity_type, entity_id, action, before_json, after_json, reason, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11)`,
+      [
+        id("audit"),
+        req.user.orgId,
+        req.user.userId,
+        req.params.id,
+        "site_integrations",
+        req.params.id,
+        "update",
+        JSON.stringify(c),
+        JSON.stringify(body),
+        body.reason || "",
+        now
+      ]
+    );
+    const updated = await query(
+      `SELECT
+        site_id AS "siteId", atg_host AS "atgHost", atg_port AS "atgPort",
+        atg_poll_interval_sec AS "atgPollIntervalSec", atg_timeout_sec AS "atgTimeoutSec",
+        atg_retries AS "atgRetries", atg_stale_sec AS "atgStaleSec",
+        pump_timeout_sec AS "pumpTimeoutSec", pump_keepalive_enabled AS "pumpKeepaliveEnabled",
+        pump_reconnect_enabled AS "pumpReconnectEnabled", pump_stale_sec AS "pumpStaleSec"
+       FROM site_integrations WHERE site_id=$1`,
+      [req.params.id]
+    );
+    res.json(updated.rows[0]);
+  })
 );
 
-app.get("/sites/:id/pumps", requireAuth, requireSiteAccess, (req, res) => {
-  const store = ensureStore();
-  const pumps = store.pumps
-    .filter((p) => p.siteId === req.params.id)
-    .map((pump) => ({
-      ...pump,
-      sides: store.pumpSides.filter((ps) => ps.pumpId === pump.id)
-    }));
-  return res.json(pumps);
-});
-
-app.post("/sites/:id/pumps", requireAuth, requireSiteAccess, requireRole("manager", "service_tech"), (req, res) => {
-  const body = req.body || {};
-  const now = new Date().toISOString();
-  if (body.pumpNumber == null || !body.label) {
-    return res.status(400).json({ error: "pumpNumber and label are required" });
-  }
-  const updated = withStore((store) => {
-    const pumpId = `pump-${req.params.id}-${body.pumpNumber}`;
-    if (store.pumps.some((p) => p.id === pumpId)) throw new Error("Pump already exists");
-    const pump = {
-      id: pumpId,
-      siteId: req.params.id,
-      pumpNumber: body.pumpNumber,
-      label: body.label,
-      active: true
-    };
-    store.pumps.push(pump);
-    for (const side of ["A", "B"]) {
-      const sideCfg = body.sides?.[side] || {};
-      store.pumpSides.push({
-        id: `ps-${pumpId}-${side.toLowerCase()}`,
-        pumpId,
-        side,
-        ip: sideCfg.ip || "",
-        port: sideCfg.port || 5201,
-        active: true
-      });
+app.get(
+  "/sites/:id/pumps",
+  requireAuth,
+  requireSiteAccess,
+  asyncHandler(async (req, res) => {
+    const pumps = await query(
+      `SELECT id, site_id AS "siteId", pump_number AS "pumpNumber", label, active
+       FROM pumps WHERE site_id=$1 ORDER BY pump_number`,
+      [req.params.id]
+    );
+    const sides = await query(
+      `SELECT id, pump_id AS "pumpId", side, ip, port, active
+       FROM pump_sides WHERE pump_id = ANY($1::text[])`,
+      [pumps.rows.map((p) => p.id)]
+    );
+    const sidesByPump = new Map();
+    for (const side of sides.rows) {
+      if (!sidesByPump.has(side.pumpId)) sidesByPump.set(side.pumpId, []);
+      sidesByPump.get(side.pumpId).push(side);
     }
-    store.auditLog.push({
-      id: `audit-${Date.now()}`,
-      orgId: req.user.orgId,
-      userId: req.user.userId,
-      siteId: req.params.id,
-      entityType: "pump",
-      entityId: pumpId,
-      action: "create",
-      beforeJson: null,
-      afterJson: pump,
-      reason: body.reason || "",
-      createdAt: now
-    });
-    return store;
-  });
-  const pump = updated.pumps.find((p) => p.siteId === req.params.id && p.pumpNumber === body.pumpNumber);
-  return res.status(201).json(pump);
-});
+    res.json(pumps.rows.map((p) => ({ ...p, sides: sidesByPump.get(p.id) || [] })));
+  })
+);
 
-app.get("/sites/:id/tanks", requireAuth, requireSiteAccess, (req, res) => {
-  const store = ensureStore();
-  return res.json(store.tanks.filter((t) => t.siteId === req.params.id));
-});
+app.post(
+  "/sites/:id/pumps",
+  requireAuth,
+  requireSiteAccess,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    if (body.pumpNumber == null || !body.label) {
+      return res.status(400).json({ error: "pumpNumber and label are required" });
+    }
+    const now = new Date().toISOString();
+    const pumpId = `pump-${req.params.id}-${body.pumpNumber}`;
+    const exists = await query("SELECT id FROM pumps WHERE id=$1", [pumpId]);
+    if (exists.rowCount > 0) return res.status(400).json({ error: "Pump already exists" });
 
-app.post("/sites/:id/tanks", requireAuth, requireSiteAccess, requireRole("manager", "service_tech"), (req, res) => {
-  const body = req.body || {};
-  if (!body.atgTankId || !body.label || !body.product) {
-    return res.status(400).json({ error: "atgTankId, label, product are required" });
-  }
-  const updated = withStore((store) => {
-    const tank = {
-      id: `tank-${req.params.id}-${body.atgTankId}`,
-      siteId: req.params.id,
-      atgTankId: body.atgTankId,
-      label: body.label,
-      product: body.product,
-      capacityLiters: Number(body.capacityLiters || 0),
-      active: true
-    };
-    store.tanks.push(tank);
-    return store;
-  });
-  return res.status(201).json(updated.tanks[updated.tanks.length - 1]);
-});
+    await query(
+      `INSERT INTO pumps(id, site_id, pump_number, label, active) VALUES ($1,$2,$3,$4,$5)`,
+      [pumpId, req.params.id, Number(body.pumpNumber), body.label, true]
+    );
+    for (const side of ["A", "B"]) {
+      const cfg = body.sides?.[side] || {};
+      await query(
+        `INSERT INTO pump_sides(id, pump_id, side, ip, port, active) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [`ps-${pumpId}-${side.toLowerCase()}`, pumpId, side, cfg.ip || "", Number(cfg.port || 5201), true]
+      );
+    }
 
-app.get("/sites/:id/layout", requireAuth, requireSiteAccess, (req, res) => {
-  const store = ensureStore();
-  const active = store.layouts.find((l) => l.siteId === req.params.id && l.isActive);
-  if (!active) return res.status(404).json({ error: "Layout not found" });
-  return res.json(active);
-});
+    await query(
+      `INSERT INTO audit_log(
+        id, org_id, user_id, site_id, entity_type, entity_id, action, before_json, after_json, reason, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)`,
+      [
+        id("audit"),
+        req.user.orgId,
+        req.user.userId,
+        req.params.id,
+        "pump",
+        pumpId,
+        "create",
+        null,
+        JSON.stringify({ pumpNumber: body.pumpNumber, label: body.label }),
+        body.reason || "",
+        now
+      ]
+    );
 
-app.post("/sites/:id/layout", requireAuth, requireSiteAccess, requireRole("manager", "service_tech"), (req, res) => {
-  const body = req.body || {};
-  if (!body.json) return res.status(400).json({ error: "json is required" });
-  const now = new Date().toISOString();
-  const updated = withStore((store) => {
-    const layouts = store.layouts.filter((l) => l.siteId === req.params.id);
-    const maxVersion = layouts.reduce((acc, item) => Math.max(acc, item.version), 0);
-    store.layouts.forEach((l) => {
-      if (l.siteId === req.params.id) l.isActive = false;
-    });
-    const next = {
-      id: `layout-${req.params.id}-v${maxVersion + 1}`,
-      siteId: req.params.id,
-      version: maxVersion + 1,
-      name: body.name || `Layout v${maxVersion + 1}`,
-      json: body.json,
-      createdBy: req.user.userId,
-      createdAt: now,
-      isActive: true
-    };
-    store.layouts.push(next);
-    store.auditLog.push({
-      id: `audit-${Date.now()}`,
-      orgId: req.user.orgId,
-      userId: req.user.userId,
-      siteId: req.params.id,
-      entityType: "forecourt_layout",
-      entityId: next.id,
-      action: "create_version",
-      beforeJson: null,
-      afterJson: next,
-      reason: body.reason || "",
-      createdAt: now
-    });
-    return store;
-  });
-  return res.status(201).json(updated.layouts.find((l) => l.siteId === req.params.id && l.isActive));
-});
+    const created = await query(
+      `SELECT id, site_id AS "siteId", pump_number AS "pumpNumber", label, active
+       FROM pumps WHERE id=$1`,
+      [pumpId]
+    );
+    res.status(201).json(created.rows[0]);
+  })
+);
 
-app.get("/alerts", requireAuth, (req, res) => {
-  const store = ensureStore();
-  const { siteId, state, severity, component, pumpId, side } = req.query;
-  let alerts = store.alerts.filter((a) => canAccessSite(req.user, a.siteId));
-  if (siteId) alerts = alerts.filter((a) => a.siteId === siteId);
-  if (state) alerts = alerts.filter((a) => a.state === state);
-  if (severity) alerts = alerts.filter((a) => a.severity === severity);
-  if (component) alerts = alerts.filter((a) => a.component === component);
-  if (pumpId) alerts = alerts.filter((a) => a.pumpId === pumpId);
-  if (side) alerts = alerts.filter((a) => a.side === side);
-  return res.json(alerts);
-});
+app.get(
+  "/sites/:id/tanks",
+  requireAuth,
+  requireSiteAccess,
+  asyncHandler(async (req, res) => {
+    const tanks = await query(
+      `SELECT id, site_id AS "siteId", atg_tank_id AS "atgTankId", label, product,
+              capacity_liters AS "capacityLiters", active
+       FROM tanks WHERE site_id=$1 ORDER BY atg_tank_id`,
+      [req.params.id]
+    );
+    res.json(tanks.rows);
+  })
+);
 
-app.post("/alerts/:id/ack", requireAuth, (req, res) => {
-  const now = new Date().toISOString();
-  const updated = withStore((store) => {
-    const alert = store.alerts.find((a) => a.id === req.params.id);
-    if (!alert) throw new Error("Alert not found");
-    if (!canAccessSite(req.user, alert.siteId)) throw new Error("Forbidden");
-    alert.state = "acknowledged";
-    alert.ackAt = now;
-    alert.ackBy = req.user.userId;
-    return store;
-  });
-  return res.json(updated.alerts.find((a) => a.id === req.params.id));
-});
+app.post(
+  "/sites/:id/tanks",
+  requireAuth,
+  requireSiteAccess,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    if (!body.atgTankId || !body.label || !body.product) {
+      return res.status(400).json({ error: "atgTankId, label, product are required" });
+    }
+    const tankId = `tank-${req.params.id}-${body.atgTankId}`;
+    await query(
+      `INSERT INTO tanks(id, site_id, atg_tank_id, label, product, capacity_liters, active)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [tankId, req.params.id, body.atgTankId, body.label, body.product, Number(body.capacityLiters || 0), true]
+    );
+    const created = await query(
+      `SELECT id, site_id AS "siteId", atg_tank_id AS "atgTankId", label, product,
+              capacity_liters AS "capacityLiters", active
+       FROM tanks WHERE id=$1`,
+      [tankId]
+    );
+    res.status(201).json(created.rows[0]);
+  })
+);
 
-app.get("/history/tanks", requireAuth, (req, res) => {
-  const store = ensureStore();
-  const { siteId, tankId } = req.query;
-  let rows = store.tankMeasurements.filter((row) => canAccessSite(req.user, row.siteId));
-  if (siteId) rows = rows.filter((row) => row.siteId === siteId);
-  if (tankId) rows = rows.filter((row) => row.tankId === tankId);
-  return res.json(rows.slice(-300));
-});
+app.get(
+  "/sites/:id/layout",
+  requireAuth,
+  requireSiteAccess,
+  asyncHandler(async (req, res) => {
+    const layout = await query(
+      `SELECT
+         id, site_id AS "siteId", version, name, json, created_by AS "createdBy",
+         created_at AS "createdAt", is_active AS "isActive"
+       FROM forecourt_layouts
+       WHERE site_id=$1 AND is_active=TRUE`,
+      [req.params.id]
+    );
+    if (layout.rowCount === 0) return res.status(404).json({ error: "Layout not found" });
+    res.json(layout.rows[0]);
+  })
+);
+
+app.post(
+  "/sites/:id/layout",
+  requireAuth,
+  requireSiteAccess,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    if (!body.json) return res.status(400).json({ error: "json is required" });
+    const now = new Date().toISOString();
+    const maxVersion = await query(
+      `SELECT COALESCE(MAX(version), 0)::int AS version FROM forecourt_layouts WHERE site_id=$1`,
+      [req.params.id]
+    );
+    const nextVersion = maxVersion.rows[0].version + 1;
+    const layoutId = `layout-${req.params.id}-v${nextVersion}`;
+    await query(`UPDATE forecourt_layouts SET is_active=FALSE WHERE site_id=$1`, [req.params.id]);
+    await query(
+      `INSERT INTO forecourt_layouts(id, site_id, version, name, json, created_by, created_at, is_active)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)`,
+      [
+        layoutId,
+        req.params.id,
+        nextVersion,
+        body.name || `Layout v${nextVersion}`,
+        JSON.stringify(body.json),
+        req.user.userId,
+        now,
+        true
+      ]
+    );
+    const created = await query(
+      `SELECT
+         id, site_id AS "siteId", version, name, json, created_by AS "createdBy",
+         created_at AS "createdAt", is_active AS "isActive"
+       FROM forecourt_layouts WHERE id=$1`,
+      [layoutId]
+    );
+    res.status(201).json(created.rows[0]);
+  })
+);
+
+app.get(
+  "/alerts",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { siteId, state, severity, component, pumpId, side } = req.query;
+    const userSiteIds = await siteIdsForUser(req.user);
+    if (!userSiteIds.length) return res.json([]);
+
+    const conditions = ["site_id = ANY($1::text[])"];
+    const params = [userSiteIds];
+    let i = 2;
+    if (siteId) {
+      conditions.push(`site_id = $${i++}`);
+      params.push(siteId);
+    }
+    if (state) {
+      conditions.push(`state = $${i++}`);
+      params.push(state);
+    }
+    if (severity) {
+      conditions.push(`severity = $${i++}`);
+      params.push(severity);
+    }
+    if (component) {
+      conditions.push(`component = $${i++}`);
+      params.push(component);
+    }
+    if (pumpId) {
+      conditions.push(`pump_id = $${i++}`);
+      params.push(pumpId);
+    }
+    if (side) {
+      conditions.push(`side = $${i++}`);
+      params.push(side);
+    }
+
+    const result = await query(
+      `SELECT
+        id, site_id AS "siteId", source_type AS "sourceType", tank_id AS "tankId", pump_id AS "pumpId",
+        side, component, severity, state, code, message, raw_payload AS "rawPayload",
+        raised_at AS "raisedAt", cleared_at AS "clearedAt", ack_at AS "ackAt",
+        ack_by AS "ackBy", assigned_to AS "assignedTo", created_at AS "createdAt"
+       FROM alarm_events
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY created_at DESC
+       LIMIT 500`,
+      params
+    );
+    res.json(result.rows);
+  })
+);
+
+app.post(
+  "/alerts/:id/ack",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const now = new Date().toISOString();
+    const userSiteIds = await siteIdsForUser(req.user);
+    const target = await query("SELECT id, site_id AS \"siteId\" FROM alarm_events WHERE id=$1", [
+      req.params.id
+    ]);
+    if (target.rowCount === 0) return res.status(404).json({ error: "Alert not found" });
+    if (!userSiteIds.includes(target.rows[0].siteId)) return res.status(403).json({ error: "Forbidden" });
+
+    const updated = await query(
+      `UPDATE alarm_events
+       SET state='acknowledged', ack_at=$1, ack_by=$2
+       WHERE id=$3
+       RETURNING
+         id, site_id AS "siteId", source_type AS "sourceType", tank_id AS "tankId", pump_id AS "pumpId",
+         side, component, severity, state, code, message, raw_payload AS "rawPayload",
+         raised_at AS "raisedAt", cleared_at AS "clearedAt", ack_at AS "ackAt",
+         ack_by AS "ackBy", assigned_to AS "assignedTo", created_at AS "createdAt"`,
+      [now, req.user.userId, req.params.id]
+    );
+    res.json(updated.rows[0]);
+  })
+);
+
+app.get(
+  "/history/tanks",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { siteId, tankId } = req.query;
+    const userSiteIds = await siteIdsForUser(req.user);
+    if (!userSiteIds.length) return res.json([]);
+    const conditions = ["site_id = ANY($1::text[])"];
+    const params = [userSiteIds];
+    let i = 2;
+    if (siteId) {
+      conditions.push(`site_id = $${i++}`);
+      params.push(siteId);
+    }
+    if (tankId) {
+      conditions.push(`tank_id = $${i++}`);
+      params.push(tankId);
+    }
+    const rows = await query(
+      `SELECT
+         id, site_id AS "siteId", tank_id AS "tankId", ts, fuel_volume_l AS "fuelVolumeL",
+         fuel_height_mm AS "fuelHeightMm", water_height_mm AS "waterHeightMm",
+         temp_c AS "tempC", ullage_l AS "ullageL", raw_payload AS "rawPayload"
+       FROM tank_measurements
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY ts DESC
+       LIMIT 300`,
+      params
+    );
+    res.json(rows.rows);
+  })
+);
 
 app.get("/events", requireAuth, (req, res) => {
   const channels = (req.query.channels || "")
@@ -419,65 +726,103 @@ app.get("/events", requireAuth, (req, res) => {
     "Cache-Control": "no-cache"
   });
   res.write("\n");
-
   const cleanup = registerClient(res, channels);
   sendEvent(res, "connected", { ok: true, ts: new Date().toISOString() });
   req.on("close", cleanup);
 });
 
-app.get("/audit", requireAuth, requireRole("manager", "service_tech"), (req, res) => {
-  const store = ensureStore();
-  res.json(store.auditLog.slice(-300));
-});
+app.get(
+  "/audit",
+  requireAuth,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (_req, res) => {
+    const rows = await query(
+      `SELECT
+        id, org_id AS "orgId", user_id AS "userId", site_id AS "siteId",
+        entity_type AS "entityType", entity_id AS "entityId", action,
+        before_json AS "beforeJson", after_json AS "afterJson", reason, created_at AS "createdAt"
+       FROM audit_log ORDER BY created_at DESC LIMIT 300`
+    );
+    res.json(rows.rows);
+  })
+);
 
-function runSimulatorTick() {
+async function runSimulatorTick() {
   const now = new Date().toISOString();
-  const updated = withStore((store) => {
-    for (const t of store.tankMeasurements) {
-      const drift = Math.round((Math.random() - 0.5) * 200);
-      t.fuelVolumeL = Math.max(0, t.fuelVolumeL + drift);
-      t.ullageL = Math.max(0, (t.ullageL || 0) - drift);
-      t.ts = now;
-    }
-    if (Math.random() < 0.2 && store.pumps.length > 0) {
-      const pump = store.pumps[Math.floor(Math.random() * store.pumps.length)];
-      store.alerts.push({
-        id: `alert-${Date.now()}`,
-        siteId: pump.siteId,
-        sourceType: "PumpSide",
-        tankId: null,
-        pumpId: pump.id,
-        side: Math.random() < 0.5 ? "A" : "B",
-        component: "printer",
-        severity: Math.random() < 0.3 ? "critical" : "warn",
-        state: "raised",
-        code: "SIM-01",
-        message: "Synthetic connectivity/print fault",
-        rawPayload: "simulator",
-        raisedAt: now,
-        clearedAt: null,
-        ackAt: null,
-        ackBy: null,
-        assignedTo: null,
-        createdAt: now
-      });
-    }
-    return store;
-  });
+  const measurements = await query(
+    `SELECT id, fuel_volume_l AS "fuelVolumeL", ullage_l AS "ullageL"
+     FROM tank_measurements
+     ORDER BY ts DESC
+     LIMIT 200`
+  );
+  for (const m of measurements.rows) {
+    const drift = Math.round((Math.random() - 0.5) * 200);
+    await query(
+      `UPDATE tank_measurements
+       SET fuel_volume_l=$1, ullage_l=$2, ts=$3
+       WHERE id=$4`,
+      [Math.max(0, m.fuelVolumeL + drift), Math.max(0, (m.ullageL || 0) - drift), now, m.id]
+    );
+  }
 
-  const siteIds = new Set(updated.sites.map((s) => s.id));
-  for (const siteId of siteIds) {
+  if (Math.random() < 0.2) {
+    const pump = await query("SELECT id, site_id AS \"siteId\" FROM pumps ORDER BY RANDOM() LIMIT 1");
+    if (pump.rowCount > 0) {
+      await query(
+        `INSERT INTO alarm_events(
+          id, site_id, source_type, tank_id, pump_id, side, component, severity, state, code, message,
+          raw_payload, raised_at, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [
+          id("alert"),
+          pump.rows[0].siteId,
+          "PumpSide",
+          null,
+          pump.rows[0].id,
+          Math.random() < 0.5 ? "A" : "B",
+          "printer",
+          Math.random() < 0.3 ? "critical" : "warn",
+          "raised",
+          "SIM-01",
+          "Synthetic connectivity/print fault",
+          "simulator",
+          now,
+          now
+        ]
+      );
+    }
+  }
+
+  const sites = await query("SELECT id FROM sites");
+  for (const site of sites.rows) {
     broadcast("site:update", {
-      channel: `site:${siteId}:alerts`,
-      siteId,
+      channel: `site:${site.id}:alerts`,
+      siteId: site.id,
       ts: now
     });
   }
 }
 
-ensureStore();
-setInterval(runSimulatorTick, 5000);
+app.use((error, _req, res, _next) => {
+  console.error(error);
+  res.status(500).json({ error: "Internal server error", detail: error.message });
+});
 
-app.listen(port, () => {
-  console.log(`petroleum-api listening on ${port}`);
+async function start() {
+  await initDb();
+  const seeded = await seedIfEmpty();
+  if (seeded) {
+    console.log("Database was empty; sample seed data inserted.");
+  }
+  setInterval(() => {
+    runSimulatorTick().catch((error) => console.error("Simulator tick error:", error.message));
+  }, 5000);
+  app.listen(port, () => {
+    console.log(`petroleum-api listening on ${port}`);
+  });
+}
+
+start().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });
