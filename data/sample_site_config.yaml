@@ -46,3 +46,76 @@ sites:
         sides:
           A: { ip: "10.12.4.33", port: 5201 }
           B: { ip: "10.12.4.34", port: 5201 }
+
+  - site_code: "1045"
+    name: "Station 1045"
+    address: "456 Harbor Blvd, Long Beach, CA"
+    postal_code: "90802"
+    region: "West"
+    lat: 33.7701
+    lon: -118.1937
+    integrations:
+      atg_host: "10.45.1.20"
+      atg_port: 10001
+      atg_poll_interval_sec: 60
+    tanks:
+      - atg_tank_id: "01"
+        label: "Regular UST"
+        product: "Regular"
+        capacity_liters: 42000
+      - atg_tank_id: "02"
+        label: "Premium UST"
+        product: "Premium"
+        capacity_liters: 32000
+      - atg_tank_id: "03"
+        label: "Diesel UST"
+        product: "Diesel"
+        capacity_liters: 36000
+    pumps:
+      - pump_number: 1
+        label: "Island B - Pump 01"
+        sides:
+          A: { ip: "10.45.1.31", port: 5201 }
+          B: { ip: "10.45.1.32", port: 5201 }
+      - pump_number: 2
+        label: "Island B - Pump 02"
+        sides:
+          A: { ip: "10.45.1.33", port: 5201 }
+          B: { ip: "10.45.1.34", port: 5201 }
+      - pump_number: 3
+        label: "Island B - Pump 03"
+        sides:
+          A: { ip: "10.45.1.35", port: 5201 }
+          B: { ip: "10.45.1.36", port: 5201 }
+
+  - site_code: "1068"
+    name: "Station 1068"
+    address: "900 River Rd, Nashville, TN"
+    postal_code: "37209"
+    region: "South"
+    lat: 36.1627
+    lon: -86.7816
+    integrations:
+      atg_host: "10.68.2.20"
+      atg_port: 10001
+      atg_poll_interval_sec: 45
+    tanks:
+      - atg_tank_id: "01"
+        label: "Regular UST"
+        product: "Regular"
+        capacity_liters: 39000
+      - atg_tank_id: "02"
+        label: "Premium UST"
+        product: "Premium"
+        capacity_liters: 30000
+    pumps:
+      - pump_number: 1
+        label: "Island C - Pump 01"
+        sides:
+          A: { ip: "10.68.2.31", port: 5201 }
+          B: { ip: "10.68.2.32", port: 5201 }
+      - pump_number: 2
+        label: "Island C - Pump 02"
+        sides:
+          A: { ip: "10.68.2.33", port: 5201 }
+          B: { ip: "10.68.2.34", port: 5201 }

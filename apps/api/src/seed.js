@@ -191,19 +191,24 @@ async function seedDatabase() {
       }
     }
 
-    if (siteIds.length > 0) {
-      const firstSite = siteIds[0];
-      const firstPump = await client.query("SELECT id FROM pumps WHERE site_id=$1 ORDER BY id LIMIT 1", [
-        firstSite
-      ]);
+    for (const siteId of siteIds) {
+      const firstPump = await client.query(
+        "SELECT id FROM pumps WHERE site_id=$1 ORDER BY pump_number LIMIT 1",
+        [siteId]
+      );
+      const firstTank = await client.query(
+        "SELECT id FROM tanks WHERE site_id=$1 ORDER BY atg_tank_id LIMIT 1",
+        [siteId]
+      );
+
       await client.query(
         `INSERT INTO alarm_events(
           id, site_id, source_type, tank_id, pump_id, side, component, severity, state, code, message,
           raw_payload, raised_at, cleared_at, ack_at, ack_by, assigned_to, created_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
         [
-          "alert-1",
-          firstSite,
+          `alert-pump-${siteId}`,
+          siteId,
           "PumpSide",
           null,
           firstPump.rows[0]?.id || null,
@@ -222,6 +227,35 @@ async function seedDatabase() {
           now
         ]
       );
+
+      if (firstTank.rows[0]?.id) {
+        await client.query(
+          `INSERT INTO alarm_events(
+            id, site_id, source_type, tank_id, pump_id, side, component, severity, state, code, message,
+            raw_payload, raised_at, cleared_at, ack_at, ack_by, assigned_to, created_at
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+          [
+            `alert-tank-${siteId}`,
+            siteId,
+            "ATG",
+            firstTank.rows[0].id,
+            null,
+            null,
+            "atg",
+            "critical",
+            "raised",
+            "ATG-LOW",
+            "Low fuel threshold warning",
+            "seed",
+            now,
+            null,
+            null,
+            null,
+            null,
+            now
+          ]
+        );
+      }
     }
   });
 }
