@@ -7,6 +7,7 @@ import { SiteDetailPage } from "./pages/SiteDetailPage";
 import { LayoutPage } from "./pages/LayoutPage";
 import { LayoutEditorPage } from "./pages/LayoutEditorPage";
 import { AdminPage } from "./pages/AdminPage";
+import xpLogo from "./assets/xprotean-logo.svg";
 
 function AppFrame({ children }) {
   const location = useLocation();
@@ -17,7 +18,9 @@ function AppFrame({ children }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">Petroleum Ops</div>
+        <div className="brand">
+          <img src={xpLogo} alt="XProtean logo" className="brand-logo" />
+        </div>
         <nav className="side-nav">
           <NavLink to="/portfolio" className={({ isActive }) => (isActive ? "active" : "")}>
             Portfolio

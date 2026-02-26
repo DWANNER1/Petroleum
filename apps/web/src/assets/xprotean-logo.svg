@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="70" viewBox="0 0 180 70" fill="none">
+  <rect width="180" height="70" rx="6" fill="#ffffff"/>
+  <path d="M34 10h14l9 13 9-13h14L64 33l18 27H68L57 43 45 60H31l18-27-15-23z" fill="#d99a2b"/>
+  <path d="M83 10h24c9 0 16 7 16 16 0 9-7 16-16 16H95v18H83V10zm22 22c4 0 7-3 7-6s-3-6-7-6H95v12h10z" fill="#1b1b1b"/>
+  <text x="24" y="67" font-family="Georgia, serif" font-size="16" fill="#1b1b1b">XProtean</text>
+</svg>
