@@ -31,6 +31,7 @@ async function request(path, options = {}) {
 export const api = {
   getSites: () => request("/sites"),
   getSite: (siteId) => request(`/sites/${siteId}`),
+  getPumps: (siteId) => request(`/sites/${siteId}/pumps`),
   createSite: (payload) =>
     request("/sites", {
       method: "POST",
@@ -40,6 +41,10 @@ export const api = {
     request(`/sites/${siteId}`, {
       method: "PATCH",
       body: JSON.stringify(payload)
+    }),
+  deleteSite: (siteId) =>
+    request(`/sites/${siteId}`, {
+      method: "DELETE"
     }),
   updateIntegrations: (siteId, payload) =>
     request(`/sites/${siteId}/integrations`, {
@@ -51,10 +56,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  updateTank: (tankId, payload) =>
+    request(`/tanks/${tankId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  deleteTank: (tankId) =>
+    request(`/tanks/${tankId}`, {
+      method: "DELETE"
+    }),
   addPump: (siteId, payload) =>
     request(`/sites/${siteId}/pumps`, {
       method: "POST",
       body: JSON.stringify(payload)
+    }),
+  updatePump: (pumpId, payload) =>
+    request(`/pumps/${pumpId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  deletePump: (pumpId) =>
+    request(`/pumps/${pumpId}`, {
+      method: "DELETE"
     }),
   getLayout: (siteId) => request(`/sites/${siteId}/layout`),
   saveLayout: (siteId, payload) =>

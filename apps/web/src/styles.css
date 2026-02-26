@@ -351,9 +351,108 @@ select {
   gap: 14px;
 }
 
+.admin-top-row {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 14px;
+}
+
+.create-station-form {
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+}
+
+.create-station-form strong {
+  grid-column: 1 / -1;
+}
+
+.station-select-wrap {
+  display: grid;
+  gap: 8px;
+}
+
 .admin-form {
   display: grid;
   gap: 8px;
+}
+
+.admin-layout {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 14px;
+}
+
+.admin-left-pane {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.left-section-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #5c778a;
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+
+.left-panel-btn {
+  width: 100%;
+  text-align: left;
+}
+
+.left-panel-btn-active {
+  background: #d8ebf5;
+  border-color: #8cb7ce;
+}
+
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.icon-card {
+  position: relative;
+  border: 1px solid #c8dce7;
+  border-radius: 10px;
+  padding: 8px;
+  text-align: center;
+  background: #fff;
+  cursor: pointer;
+}
+
+.icon-card-active {
+  border-color: #4f8fb0;
+  box-shadow: 0 0 0 2px #d8ebf5;
+}
+
+.asset-icon {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
+
+.delete-x {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid #d98e8e;
+  color: #b72a2a;
+  background: #fff4f4;
+  padding: 0;
+  line-height: 1;
+}
+
+.admin-right-pane {
+  min-height: 360px;
+  align-content: start;
+}
+
+.pane-disabled {
+  opacity: 0.7;
 }
 
 .admin-meta {
@@ -371,6 +470,12 @@ select {
 .admin-warning {
   margin-top: 10px;
   color: #8a5b08;
+}
+
+.danger-btn {
+  border-color: #cf7f7f;
+  background: #fff0f0;
+  color: #9b1b1b;
 }
 
 .grid-disabled {
@@ -396,6 +501,18 @@ select {
   }
 
   .editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-top-row {
+    grid-template-columns: 1fr;
+  }
+
+  .create-station-form {
     grid-template-columns: 1fr;
   }
 }

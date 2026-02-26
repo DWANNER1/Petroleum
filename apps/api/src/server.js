@@ -29,6 +29,11 @@ async function siteIdsForUser(user) {
   return user.siteIds || [];
 }
 
+async function ensureSitePermission(user, siteId) {
+  const ids = await siteIdsForUser(user);
+  return ids.includes(siteId);
+}
+
 async function hydrateUserWithSites(userId) {
   const userResult = await query(
     "SELECT id, org_id AS \"orgId\", email, name, role FROM users WHERE id=$1",
@@ -342,6 +347,44 @@ app.patch(
   })
 );
 
+app.delete(
+  "/sites/:id",
+  requireAuth,
+  requireSiteAccess,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const current = await query(
+      `SELECT id, site_code AS "siteCode", name FROM sites WHERE id=$1`,
+      [req.params.id]
+    );
+    if (current.rowCount === 0) return res.status(404).json({ error: "Site not found" });
+
+    await query("DELETE FROM user_site_assignments WHERE site_id=$1", [req.params.id]);
+    await query("DELETE FROM sites WHERE id=$1", [req.params.id]);
+
+    await query(
+      `INSERT INTO audit_log(
+        id, org_id, user_id, site_id, entity_type, entity_id, action, before_json, after_json, reason, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11)`,
+      [
+        id("audit"),
+        req.user.orgId,
+        req.user.userId,
+        req.params.id,
+        "site",
+        req.params.id,
+        "delete",
+        JSON.stringify(current.rows[0]),
+        null,
+        "",
+        new Date().toISOString()
+      ]
+    );
+
+    res.json({ ok: true, deletedSiteId: req.params.id });
+  })
+);
+
 app.get(
   "/sites/:id/integrations",
   requireAuth,
@@ -506,6 +549,78 @@ app.post(
   })
 );
 
+app.patch(
+  "/pumps/:id",
+  requireAuth,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const current = await query(
+      `SELECT id, site_id AS "siteId", pump_number AS "pumpNumber", label, active
+       FROM pumps WHERE id=$1`,
+      [req.params.id]
+    );
+    if (current.rowCount === 0) return res.status(404).json({ error: "Pump not found" });
+    const pump = current.rows[0];
+    const allowed = await ensureSitePermission(req.user, pump.siteId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+    await query(
+      `UPDATE pumps SET pump_number=$1, label=$2, active=$3 WHERE id=$4`,
+      [
+        body.pumpNumber ?? pump.pumpNumber,
+        body.label ?? pump.label,
+        body.active ?? pump.active,
+        req.params.id
+      ]
+    );
+
+    for (const side of ["A", "B"]) {
+      if (!body.sides?.[side]) continue;
+      const existing = await query(
+        `SELECT id FROM pump_sides WHERE pump_id=$1 AND side=$2`,
+        [req.params.id, side]
+      );
+      if (existing.rowCount > 0) {
+        await query(
+          `UPDATE pump_sides SET ip=$1, port=$2 WHERE id=$3`,
+          [body.sides[side].ip || "", Number(body.sides[side].port || 5201), existing.rows[0].id]
+        );
+      } else {
+        await query(
+          `INSERT INTO pump_sides(id, pump_id, side, ip, port, active) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [id("ps"), req.params.id, side, body.sides[side].ip || "", Number(body.sides[side].port || 5201), true]
+        );
+      }
+    }
+
+    const updated = await query(
+      `SELECT id, site_id AS "siteId", pump_number AS "pumpNumber", label, active
+       FROM pumps WHERE id=$1`,
+      [req.params.id]
+    );
+    res.json(updated.rows[0]);
+  })
+);
+
+app.delete(
+  "/pumps/:id",
+  requireAuth,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const current = await query(
+      `SELECT id, site_id AS "siteId" FROM pumps WHERE id=$1`,
+      [req.params.id]
+    );
+    if (current.rowCount === 0) return res.status(404).json({ error: "Pump not found" });
+    const allowed = await ensureSitePermission(req.user, current.rows[0].siteId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+    await query("DELETE FROM pumps WHERE id=$1", [req.params.id]);
+    res.json({ ok: true, deletedPumpId: req.params.id });
+  })
+);
+
 app.get(
   "/sites/:id/tanks",
   requireAuth,
@@ -544,6 +659,62 @@ app.post(
       [tankId]
     );
     res.status(201).json(created.rows[0]);
+  })
+);
+
+app.patch(
+  "/tanks/:id",
+  requireAuth,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const current = await query(
+      `SELECT id, site_id AS "siteId", atg_tank_id AS "atgTankId", label, product,
+              capacity_liters AS "capacityLiters", active
+       FROM tanks WHERE id=$1`,
+      [req.params.id]
+    );
+    if (current.rowCount === 0) return res.status(404).json({ error: "Tank not found" });
+    const tank = current.rows[0];
+    const allowed = await ensureSitePermission(req.user, tank.siteId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+    await query(
+      `UPDATE tanks SET atg_tank_id=$1, label=$2, product=$3, capacity_liters=$4, active=$5 WHERE id=$6`,
+      [
+        body.atgTankId ?? tank.atgTankId,
+        body.label ?? tank.label,
+        body.product ?? tank.product,
+        body.capacityLiters ?? tank.capacityLiters,
+        body.active ?? tank.active,
+        req.params.id
+      ]
+    );
+    const updated = await query(
+      `SELECT id, site_id AS "siteId", atg_tank_id AS "atgTankId", label, product,
+              capacity_liters AS "capacityLiters", active
+       FROM tanks WHERE id=$1`,
+      [req.params.id]
+    );
+    res.json(updated.rows[0]);
+  })
+);
+
+app.delete(
+  "/tanks/:id",
+  requireAuth,
+  requireRole("manager", "service_tech"),
+  asyncHandler(async (req, res) => {
+    const current = await query(
+      `SELECT id, site_id AS "siteId" FROM tanks WHERE id=$1`,
+      [req.params.id]
+    );
+    if (current.rowCount === 0) return res.status(404).json({ error: "Tank not found" });
+    const allowed = await ensureSitePermission(req.user, current.rows[0].siteId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+    await query("DELETE FROM tanks WHERE id=$1", [req.params.id]);
+    res.json({ ok: true, deletedTankId: req.params.id });
   })
 );
 
