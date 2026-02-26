@@ -472,6 +472,12 @@ select {
   color: #8a5b08;
 }
 
+.admin-inline-error {
+  color: #9b1b1b;
+  font-size: 12px;
+  margin-top: -2px;
+}
+
 .danger-btn {
   border-color: #cf7f7f;
   background: #fff0f0;

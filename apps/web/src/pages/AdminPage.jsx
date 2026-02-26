@@ -30,6 +30,7 @@ export function AdminPage() {
   const [pumpForm, setPumpForm] = useState(emptyPump);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [stationCodeError, setStationCodeError] = useState("");
 
   async function loadSites() {
     const rows = await api.getSites();
@@ -84,10 +85,26 @@ export function AdminPage() {
   );
   const tanks = siteDetail?.tanks || [];
   const pumps = pumpsWithSides || [];
+  const existingCodes = useMemo(
+    () => new Set(sites.map((s) => String(s.siteCode || "").trim())),
+    [sites]
+  );
 
   function clearStatus() {
     setMessage("");
     setError("");
+  }
+  function validateStationCode(rawCode) {
+    const code = String(rawCode || "").trim();
+    if (!code) return "Station number is required.";
+    if (!/^\d+$/.test(code)) return "Station number must be numeric only.";
+    if (existingCodes.has(code)) return `Station ${code} already exists.`;
+    return "";
+  }
+  function onChangeStationCode(value) {
+    const numericOnly = value.replace(/[^\d]/g, "");
+    setCreateStationForm((f) => ({ ...f, siteCode: numericOnly }));
+    setStationCodeError(validateStationCode(numericOnly));
   }
   function requireStation() {
     if (!selectedSiteId) {
@@ -100,6 +117,12 @@ export function AdminPage() {
   async function submitCreateStation(e) {
     e.preventDefault();
     clearStatus();
+    const codeError = validateStationCode(createStationForm.siteCode);
+    setStationCodeError(codeError);
+    if (codeError) {
+      setError(codeError);
+      return;
+    }
     try {
       const created = await api.createSite({
         siteCode: createStationForm.siteCode.trim(),
@@ -110,6 +133,7 @@ export function AdminPage() {
       });
       setMessage(`Created station ${created.siteCode}.`);
       setCreateStationForm(emptyCreateStation);
+      setStationCodeError("");
       await loadSites();
       setSelectedSiteId(created.id);
       setActivePanel("station");
@@ -339,12 +363,19 @@ export function AdminPage() {
           {activePanel === "createStation" && (
             <form className="admin-form" onSubmit={submitCreateStation}>
               <h3>Add Station</h3>
-              <input placeholder="Station Number / Site Code" value={createStationForm.siteCode} onChange={(e) => setCreateStationForm((f) => ({ ...f, siteCode: e.target.value }))} required />
+              <input
+                placeholder="Station Number / Site Code"
+                value={createStationForm.siteCode}
+                onChange={(e) => onChangeStationCode(e.target.value)}
+                onBlur={() => setStationCodeError(validateStationCode(createStationForm.siteCode))}
+                required
+              />
+              {stationCodeError && <div className="admin-inline-error">{stationCodeError}</div>}
               <input placeholder="Station Name" value={createStationForm.name} onChange={(e) => setCreateStationForm((f) => ({ ...f, name: e.target.value }))} required />
               <input placeholder="Address" value={createStationForm.address} onChange={(e) => setCreateStationForm((f) => ({ ...f, address: e.target.value }))} required />
               <input placeholder="ZIP Code" value={createStationForm.postalCode} onChange={(e) => setCreateStationForm((f) => ({ ...f, postalCode: e.target.value }))} required />
               <input placeholder="Region" value={createStationForm.region} onChange={(e) => setCreateStationForm((f) => ({ ...f, region: e.target.value }))} />
-              <button type="submit">Create Station</button>
+              <button type="submit" disabled={!!stationCodeError}>Create Station</button>
             </form>
           )}
 
