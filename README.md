@@ -16,7 +16,51 @@ MVP scaffold for a multi-site gas station monitoring platform based on:
 
 The API requires `DATABASE_URL` and persists all app data in PostgreSQL.
 
-## Quick Start (Local)
+## Local-Only Workflow (Recommended)
+
+Use this flow to make and test all changes locally first, then deploy only when ready.
+
+1. Run one-time setup (Windows PowerShell):
+
+```powershell
+npm.cmd run setup:local
+```
+
+This creates `.env` from `.env.example` and installs dependencies.
+
+2. Install/start PostgreSQL locally with:
+
+- DB: `petroleum`
+- User: `postgres`
+- Password: `postgres`
+- Port: `5432`
+
+3. Seed the database:
+
+```powershell
+$env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
+$env:PGSSL='disable'
+npm.cmd run seed
+```
+
+4. Start all apps locally:
+
+```powershell
+npm.cmd run dev
+```
+
+Services:
+
+- Web: `http://localhost:5173`
+- API: `http://localhost:4000`
+
+Demo users:
+
+- Manager: `manager@demo.com` / `demo123`
+- Service Tech: `tech@demo.com` / `demo123`
+- Operator: `operator@demo.com` / `demo123`
+
+## Quick Start (Cross-platform Manual)
 
 1. Install dependencies:
 
@@ -24,16 +68,12 @@ The API requires `DATABASE_URL` and persists all app data in PostgreSQL.
 npm install
 ```
 
-2. Seed data from sample config/layout:
+2. Set local DB env and seed data from sample config/layout:
 
 ```bash
+export DATABASE_URL=postgres://postgres:postgres@localhost:5432/petroleum
+export PGSSL=disable
 npm run seed
-```
-
-2a. Set a local database URL before seeding/running API:
-
-```bash
-set DATABASE_URL=postgres://postgres:postgres@localhost:5432/petroleum
 ```
 
 3. Start all apps:
@@ -52,6 +92,18 @@ Demo users:
 - Manager: `manager@demo.com` / `demo123`
 - Service Tech: `tech@demo.com` / `demo123`
 - Operator: `operator@demo.com` / `demo123`
+
+## Hosting
+
+This repository is configured for:
+
+- Frontend hosting: Netlify (`netlify.toml`)
+- API hosting: Railway (`railway.json`) with a Railway PostgreSQL service
+
+The exact live URL is not stored in this repo. You can find it in:
+
+- Netlify site dashboard: Site URL
+- Railway service dashboard: Deployment URL (and API domain)
 
 ## Deployment (Free): Netlify + Railway
 
