@@ -4,6 +4,11 @@ import { api } from "../api";
 
 const TABS = ["overview", "alerts", "tanks", "pumps", "history", "layout", "config"];
 
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
 export function SiteDetailPage() {
   const { siteId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -99,8 +104,12 @@ export function SiteDetailPage() {
           <table className="table">
             <thead>
               <tr>
+                <th>Event Time</th>
+                <th>Alert Type</th>
+                <th>Type ID</th>
                 <th>Severity</th>
                 <th>State</th>
+                <th>Reported</th>
                 <th>Device</th>
                 <th>Side</th>
                 <th>Message</th>
@@ -109,10 +118,14 @@ export function SiteDetailPage() {
             <tbody>
               {alerts.map((alert) => (
                 <tr key={alert.id}>
+                  <td>{formatDateTime(alert.eventAt || alert.raisedAt || alert.createdAt)}</td>
+                  <td>{alert.alertType || "-"}</td>
+                  <td>{alert.alertTypeId || "-"}</td>
                   <td className={alert.severity === "critical" ? "severity-critical" : "severity-warn"}>
                     {alert.severity}
                   </td>
                   <td>{alert.state}</td>
+                  <td>{alert.reportedState || "-"}</td>
                   <td>{alert.pumpId || alert.tankId || "-"}</td>
                   <td>{alert.side || "-"}</td>
                   <td>{alert.message}</td>

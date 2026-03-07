@@ -1,8 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80" fill="none">
-  <rect x="10" y="20" width="100" height="38" rx="18" fill="#f09a2f" stroke="#d97e17" stroke-width="2"/>
-  <rect x="20" y="58" width="16" height="6" rx="1" fill="#5b666c"/>
-  <rect x="84" y="58" width="16" height="6" rx="1" fill="#5b666c"/>
-  <rect x="24" y="64" width="68" height="4" rx="1" fill="#6a747a"/>
-  <line x1="34" y1="20" x2="34" y2="58" stroke="#df8d2a" stroke-width="3"/>
-  <line x1="86" y1="20" x2="86" y2="58" stroke="#df8d2a" stroke-width="3"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120" viewBox="0 0 80 120" fill="none">
+  <defs>
+    <linearGradient id="tankGold" x1="16" y1="10" x2="64" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7D98A"/>
+      <stop offset="1" stop-color="#B9872F"/>
+    </linearGradient>
+  </defs>
+  <rect x="18" y="10" width="44" height="92" rx="10" stroke="url(#tankGold)" stroke-width="4" fill="rgba(255,255,255,0.02)"/>
+  <path d="M28 28H52" stroke="url(#tankGold)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M28 42H52" stroke="url(#tankGold)" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+  <path d="M30 56C30 50.477 34.477 46 40 46C45.523 46 50 50.477 50 56V76H30V56Z" stroke="url(#tankGold)" stroke-width="4"/>
+  <path d="M34 88H46" stroke="url(#tankGold)" stroke-width="4" stroke-linecap="round"/>
+  <rect x="24" y="102" width="32" height="8" rx="4" fill="url(#tankGold)" opacity="0.9"/>
 </svg>

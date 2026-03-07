@@ -3,6 +3,8 @@ import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { loginDefault } from "./api";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { WorkQueuePage } from "./pages/WorkQueuePage";
+import { TankInformationPage } from "./pages/TankInformationPage";
+import { TankChartsPage } from "./pages/TankChartsPage";
 import { SiteDetailPage } from "./pages/SiteDetailPage";
 import { LayoutPage } from "./pages/LayoutPage";
 import { LayoutEditorPage } from "./pages/LayoutEditorPage";
@@ -14,6 +16,8 @@ function AppFrame({ children }) {
   const pageTitle =
     location.pathname.startsWith("/sites/") ? "Site Operations" :
     location.pathname.startsWith("/work-queue") ? "Service Work Queue" :
+    location.pathname.startsWith("/tank-information") ? "Tank Information" :
+    location.pathname.startsWith("/tank-charts") ? "Tank Charts" :
     "Portfolio Command Center";
   return (
     <div className="app-shell">
@@ -22,13 +26,19 @@ function AppFrame({ children }) {
           <img src={xpLogo} alt="XProtean logo" className="brand-logo" />
         </div>
         <nav className="side-nav">
-          <NavLink to="/portfolio" className={({ isActive }) => (isActive ? "active" : "")}>
+          <NavLink to="/portfolio" className={({ isActive }) => (isActive ? "active" : "") }>
             Portfolio
           </NavLink>
-          <NavLink to="/work-queue" className={({ isActive }) => (isActive ? "active" : "")}>
+          <NavLink to="/work-queue" className={({ isActive }) => (isActive ? "active" : "") }>
             Work Queue
           </NavLink>
-          <NavLink to="/admin" className={({ isActive }) => (isActive ? "active" : "")}>
+          <NavLink to="/tank-information" className={({ isActive }) => (isActive ? "active" : "") }>
+            Tank Information
+          </NavLink>
+          <NavLink to="/tank-charts" className={({ isActive }) => (isActive ? "active" : "") }>
+            Tank Charts
+          </NavLink>
+          <NavLink to="/admin" className={({ isActive }) => (isActive ? "active" : "") }>
             Admin
           </NavLink>
         </nav>
@@ -64,15 +74,17 @@ export default function App() {
 
   return (
     <AppFrame>
-        <Routes>
-          <Route path="/" element={<Navigate to="/portfolio" replace />} />
-          <Route path="/portfolio" element={<PortfolioPage />} />
-          <Route path="/work-queue" element={<WorkQueuePage />} />
-          <Route path="/admin" element={<AdminPage />} />
-          <Route path="/sites/:siteId" element={<SiteDetailPage />} />
-          <Route path="/sites/:siteId/layout" element={<LayoutPage />} />
-          <Route path="/sites/:siteId/layout/edit" element={<LayoutEditorPage />} />
-        </Routes>
+      <Routes>
+        <Route path="/" element={<Navigate to="/portfolio" replace />} />
+        <Route path="/portfolio" element={<PortfolioPage />} />
+        <Route path="/work-queue" element={<WorkQueuePage />} />
+        <Route path="/tank-information" element={<TankInformationPage />} />
+        <Route path="/tank-charts" element={<TankChartsPage />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="/sites/:siteId" element={<SiteDetailPage />} />
+        <Route path="/sites/:siteId/layout" element={<LayoutPage />} />
+        <Route path="/sites/:siteId/layout/edit" element={<LayoutEditorPage />} />
+      </Routes>
     </AppFrame>
   );
 }

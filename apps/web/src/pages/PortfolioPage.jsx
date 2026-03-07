@@ -66,6 +66,7 @@ export function PortfolioPage() {
               <div className="inline">
                 <Link to={`/sites/${selectedSite.id}`}>Open Site Detail</Link>
                 <Link to={`/sites/${selectedSite.id}/layout`}>Open Layout</Link>
+                <Link to={`/work-queue?siteId=${encodeURIComponent(selectedSite.id)}`}>Alerts</Link>
               </div>
             </div>
           )}

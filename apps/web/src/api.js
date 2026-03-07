@@ -93,5 +93,9 @@ export const api = {
     const query = new URLSearchParams(params).toString();
     return request(`/history/tanks${query ? `?${query}` : ""}`);
   },
+  getTankInformation: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return request(`/tank-information${query ? `?${query}` : ""}`);
+  },
   ackAlert: (id) => request(`/alerts/${id}/ack`, { method: "POST" })
 };

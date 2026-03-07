@@ -816,7 +816,8 @@ app.get(
     const result = await query(
       `SELECT
         id, site_id AS "siteId", source_type AS "sourceType", tank_id AS "tankId", pump_id AS "pumpId",
-        side, component, severity, state, code, message, raw_payload AS "rawPayload",
+        side, component, severity, state, event_at AS "eventAt", alert_type AS "alertType",
+        alert_type_id AS "alertTypeId", reported_state AS "reportedState", code, message, raw_payload AS "rawPayload",
         raised_at AS "raisedAt", cleared_at AS "clearedAt", ack_at AS "ackAt",
         ack_by AS "ackBy", assigned_to AS "assignedTo", created_at AS "createdAt"
        FROM alarm_events
@@ -847,7 +848,8 @@ app.post(
        WHERE id=$3
        RETURNING
          id, site_id AS "siteId", source_type AS "sourceType", tank_id AS "tankId", pump_id AS "pumpId",
-         side, component, severity, state, code, message, raw_payload AS "rawPayload",
+         side, component, severity, state, event_at AS "eventAt", alert_type AS "alertType",
+         alert_type_id AS "alertTypeId", reported_state AS "reportedState", code, message, raw_payload AS "rawPayload",
          raised_at AS "raisedAt", cleared_at AS "clearedAt", ack_at AS "ackAt",
          ack_by AS "ackBy", assigned_to AS "assignedTo", created_at AS "createdAt"`,
       [now, req.user.userId, req.params.id]
@@ -860,7 +862,7 @@ app.get(
   "/history/tanks",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { siteId, tankId } = req.query;
+    const { siteId, tankId, from, to, limit } = req.query;
     const userSiteIds = await siteIdsForUser(req.user);
     if (!userSiteIds.length) return res.json([]);
     const conditions = ["site_id = ANY($1::text[])"];
@@ -874,6 +876,15 @@ app.get(
       conditions.push(`tank_id = $${i++}`);
       params.push(tankId);
     }
+    if (from) {
+      conditions.push(`ts >= $${i++}`);
+      params.push(from);
+    }
+    if (to) {
+      conditions.push(`ts <= $${i++}`);
+      params.push(to);
+    }
+    const rowLimit = Math.min(10000, Math.max(100, Number(limit) || (tankId ? 2500 : 6000)));
     const rows = await query(
       `SELECT
          id, site_id AS "siteId", tank_id AS "tankId", ts, fuel_volume_l AS "fuelVolumeL",
@@ -882,13 +893,106 @@ app.get(
        FROM tank_measurements
        WHERE ${conditions.join(" AND ")}
        ORDER BY ts DESC
-       LIMIT 300`,
+       LIMIT ${rowLimit}`,
       params
     );
     res.json(rows.rows);
   })
 );
 
+
+app.get(
+  "/tank-information",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { siteId, tankId, product, from, to, refillOnly, limit } = req.query;
+    const userSiteIds = await siteIdsForUser(req.user);
+    if (!userSiteIds.length) return res.json([]);
+
+    const conditions = ["r.site_id = ANY($1::text[])"];
+    const params = [userSiteIds];
+    let i = 2;
+
+    if (siteId) {
+      conditions.push(`r.site_id = $${i++}`);
+      params.push(siteId);
+    }
+    if (tankId) {
+      conditions.push(`r.tank_id = $${i++}`);
+      params.push(tankId);
+    }
+    if (product) {
+      conditions.push(`t.product = $${i++}`);
+      params.push(product);
+    }
+    if (from) {
+      conditions.push(`r.read_at >= $${i++}`);
+      params.push(from);
+    }
+    if (to) {
+      conditions.push(`r.read_at <= $${i++}`);
+      params.push(to);
+    }
+    if (refillOnly === "true") {
+      conditions.push("COALESCE(r.raw_payload::jsonb->>'event', 'drawdown') = 'delivery'");
+    }
+
+    const rowLimit = Math.min(10000, Math.max(100, Number(limit) || (tankId ? 2500 : 6000)));
+    const result = await query(
+      `WITH filtered AS (
+        SELECT
+          r.id,
+          r.site_id AS "siteId",
+          r.tank_id AS "tankId",
+          s.site_code AS "siteCode",
+          s.name AS "siteName",
+          r.facility_name AS "facilityName",
+          t.atg_tank_id AS "atgTankId",
+          t.label AS "tankLabel",
+          t.product,
+          r.read_at AS "readAt",
+          r.tank_capacity AS "tankCapacity",
+          r.ullage,
+          r.safe_ullage AS "safeUllage",
+          r.volume,
+          r.raw_payload AS "rawPayload"
+        FROM atg_inventory_readings r
+        JOIN sites s ON s.id = r.site_id
+        JOIN tanks t ON t.id = r.tank_id
+        WHERE ${conditions.join(" AND ")}
+      ), ranked AS (
+        SELECT
+          filtered.*,
+          LAG(volume) OVER (PARTITION BY "tankId" ORDER BY "readAt") AS "previousVolume"
+        FROM filtered
+      )
+      SELECT
+        id,
+        "siteId",
+        "tankId",
+        "siteCode",
+        "siteName",
+        "facilityName",
+        "atgTankId",
+        "tankLabel",
+        product,
+        "readAt",
+        "tankCapacity",
+        ullage,
+        "safeUllage",
+        volume,
+        ROUND((CASE WHEN "tankCapacity" > 0 THEN (volume / "tankCapacity") * 100 ELSE 0 END)::numeric, 1) AS "fillPercent",
+        ROUND((volume - COALESCE("previousVolume", volume))::numeric, 2) AS "deltaVolume",
+        COALESCE("rawPayload"::jsonb->>'event', 'drawdown') AS "eventType"
+      FROM ranked
+      ORDER BY "readAt" DESC
+      LIMIT ${rowLimit}`,
+      params
+    );
+
+    res.json(result.rows);
+  })
+);
 app.get("/events", requireAuth, (req, res) => {
   const channels = (req.query.channels || "")
     .split(",")
@@ -911,6 +1015,7 @@ app.get(
   requireAuth,
   requireRole("manager", "service_tech"),
   asyncHandler(async (_req, res) => {
+    const rowLimit = Math.min(10000, Math.max(100, Number(limit) || (tankId ? 2500 : 6000)));
     const rows = await query(
       `SELECT
         id, org_id AS "orgId", user_id AS "userId", site_id AS "siteId",
@@ -924,50 +1029,6 @@ app.get(
 
 async function runSimulatorTick() {
   const now = new Date().toISOString();
-  const measurements = await query(
-    `SELECT id, fuel_volume_l AS "fuelVolumeL", ullage_l AS "ullageL"
-     FROM tank_measurements
-     ORDER BY ts DESC
-     LIMIT 200`
-  );
-  for (const m of measurements.rows) {
-    const drift = Math.round((Math.random() - 0.5) * 200);
-    await query(
-      `UPDATE tank_measurements
-       SET fuel_volume_l=$1, ullage_l=$2, ts=$3
-       WHERE id=$4`,
-      [Math.max(0, m.fuelVolumeL + drift), Math.max(0, (m.ullageL || 0) - drift), now, m.id]
-    );
-  }
-
-  if (Math.random() < 0.2) {
-    const pump = await query("SELECT id, site_id AS \"siteId\" FROM pumps ORDER BY RANDOM() LIMIT 1");
-    if (pump.rowCount > 0) {
-      await query(
-        `INSERT INTO alarm_events(
-          id, site_id, source_type, tank_id, pump_id, side, component, severity, state, code, message,
-          raw_payload, raised_at, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [
-          id("alert"),
-          pump.rows[0].siteId,
-          "PumpSide",
-          null,
-          pump.rows[0].id,
-          Math.random() < 0.5 ? "A" : "B",
-          "printer",
-          Math.random() < 0.3 ? "critical" : "warn",
-          "raised",
-          "SIM-01",
-          "Synthetic connectivity/print fault",
-          "simulator",
-          now,
-          now
-        ]
-      );
-    }
-  }
-
   const sites = await query("SELECT id FROM sites");
   for (const site of sites.rows) {
     broadcast("site:update", {
@@ -1013,3 +1074,10 @@ start().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+
+
+
+
+
+

@@ -1,14 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from "react-leaflet";
 
-const DEFAULT_CENTER = [39.8283, -98.5795];
+const DEFAULT_CENTER = [37.7749, -122.4194];
 const geocodeCache = new Map();
 
 function siteQuery(site) {
   return [site.address, site.postalCode].filter(Boolean).join(" ").trim();
 }
 
+function hasStoredPoint(site) {
+  return Number(site?.lat) !== 0 && Number(site?.lon) !== 0 && Number.isFinite(Number(site?.lat)) && Number.isFinite(Number(site?.lon));
+}
+
+function siteHasActiveAlerts(site) {
+  return (site?.criticalCount || 0) > 0 || (site?.warnCount || 0) > 0;
+}
+
 async function geocodeSite(site) {
+  if (hasStoredPoint(site)) {
+    return { lat: Number(site.lat), lon: Number(site.lon) };
+  }
+
   const query = siteQuery(site);
   if (!query) return null;
   if (geocodeCache.has(query)) return geocodeCache.get(query);
@@ -64,7 +77,7 @@ export function SiteMap({ sites, onSelect, selectedSiteId }) {
 
   return (
     <div className="real-map">
-      <MapContainer center={DEFAULT_CENTER} zoom={4} scrollWheelZoom={true} style={{ height: "100%", width: "100%" }}>
+      <MapContainer center={DEFAULT_CENTER} zoom={6} scrollWheelZoom={true} style={{ height: "100%", width: "100%" }}>
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -86,6 +99,11 @@ export function SiteMap({ sites, onSelect, selectedSiteId }) {
               <strong>{site.name}</strong>
               <div>{site.address}</div>
               <div>{site.postalCode || "ZIP n/a"}</div>
+              {siteHasActiveAlerts(site) && (
+                <div style={{ marginTop: 8 }}>
+                  <Link to={`/work-queue?siteId=${encodeURIComponent(site.id)}`}>Alerts</Link>
+                </div>
+              )}
             </Popup>
           </CircleMarker>
         ))}

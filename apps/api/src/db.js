@@ -154,6 +154,10 @@ async function initDb() {
       component TEXT NOT NULL,
       severity TEXT NOT NULL,
       state TEXT NOT NULL,
+      event_at TIMESTAMPTZ,
+      alert_type TEXT,
+      alert_type_id INTEGER,
+      reported_state TEXT,
       code TEXT,
       message TEXT NOT NULL,
       raw_payload TEXT,
@@ -176,6 +180,21 @@ async function initDb() {
       temp_c DOUBLE PRECISION,
       ullage_l DOUBLE PRECISION,
       raw_payload TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS atg_inventory_readings (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      tank_id TEXT NOT NULL REFERENCES tanks(id) ON DELETE CASCADE,
+      facility_name TEXT NOT NULL,
+      atg_tank_label TEXT NOT NULL,
+      read_at TIMESTAMPTZ NOT NULL,
+      tank_capacity DOUBLE PRECISION NOT NULL,
+      ullage DOUBLE PRECISION,
+      safe_ullage DOUBLE PRECISION,
+      volume DOUBLE PRECISION,
+      raw_payload TEXT,
+      created_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS connection_status (
@@ -206,6 +225,26 @@ async function initDb() {
   await query(`
     ALTER TABLE sites
     ADD COLUMN IF NOT EXISTS postal_code TEXT NOT NULL DEFAULT '';
+  `);
+
+  await query(`
+    ALTER TABLE alarm_events
+    ADD COLUMN IF NOT EXISTS event_at TIMESTAMPTZ;
+  `);
+
+  await query(`
+    ALTER TABLE alarm_events
+    ADD COLUMN IF NOT EXISTS alert_type TEXT;
+  `);
+
+  await query(`
+    ALTER TABLE alarm_events
+    ADD COLUMN IF NOT EXISTS alert_type_id INTEGER;
+  `);
+
+  await query(`
+    ALTER TABLE alarm_events
+    ADD COLUMN IF NOT EXISTS reported_state TEXT;
   `);
 }
 
