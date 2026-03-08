@@ -26,7 +26,7 @@ function AppFrame({ children }) {
           <img src={xpLogo} alt="XProtean logo" className="brand-logo" />
         </div>
         <nav className="side-nav">
-          <NavLink to="/portfolio" className={({ isActive }) => (isActive ? "active" : "") }>
+          <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "") }>
             Portfolio
           </NavLink>
           <NavLink to="/work-queue" className={({ isActive }) => (isActive ? "active" : "") }>
@@ -75,8 +75,8 @@ export default function App() {
   return (
     <AppFrame>
       <Routes>
-        <Route path="/" element={<Navigate to="/portfolio" replace />} />
-        <Route path="/portfolio" element={<PortfolioPage />} />
+        <Route path="/" element={<PortfolioPage />} />
+        <Route path="/portfolio" element={<Navigate to="/" replace />} />
         <Route path="/work-queue" element={<WorkQueuePage />} />
         <Route path="/tank-information" element={<TankInformationPage />} />
         <Route path="/tank-charts" element={<TankChartsPage />} />
