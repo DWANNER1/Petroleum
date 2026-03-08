@@ -1,7 +1,28 @@
-import { useEffect, useState } from "react";
+import { Component, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { SiteMap } from "../components/SiteMap";
+
+class MapErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    console.error("Portfolio map failed to render", error);
+  }
+
+  render() {
+    const { hasError } = this.state;
+    const { fallback, children } = this.props;
+    return hasError ? fallback : children;
+  }
+}
 
 export function PortfolioPage() {
   const [sites, setSites] = useState([]);
@@ -52,7 +73,16 @@ export function PortfolioPage() {
             <h3>Portfolio Map</h3>
             <span>Map-first overview</span>
           </div>
-          <SiteMap sites={sites} selectedSiteId={selectedSite?.id} onSelect={setSelectedSite} />
+          <MapErrorBoundary
+            fallback={
+              <div className="card portfolio-map-fallback">
+                <strong>Map unavailable</strong>
+                <div>The site list is still available below while the map is unavailable.</div>
+              </div>
+            }
+          >
+            <SiteMap sites={sites} selectedSiteId={selectedSite?.id} onSelect={setSelectedSite} />
+          </MapErrorBoundary>
           {selectedSite && (
             <div className="drawer">
               <div className="drawer-title">{selectedSite.name}</div>
@@ -93,6 +123,47 @@ export function PortfolioPage() {
           </div>
         </section>
       </div>
+
+      <section className="card portfolio-site-table">
+        <div className="section-header">
+          <h3>Site Directory</h3>
+          <span>Always-visible portfolio summary</span>
+        </div>
+        <div className="table-wrapper">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Site</th>
+                <th>Code</th>
+                <th>Region</th>
+                <th>Address</th>
+                <th>Alerts</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sites.length ? (
+                sites.map((site) => (
+                  <tr key={site.id}>
+                    <td>
+                      <button className="table-link-button" onClick={() => setSelectedSite(site)}>
+                        {site.name}
+                      </button>
+                    </td>
+                    <td>{site.siteCode}</td>
+                    <td>{site.region || "n/a"}</td>
+                    <td>{[site.address, site.postalCode].filter(Boolean).join(" ") || "n/a"}</td>
+                    <td>{(site.criticalCount || 0) + (site.warnCount || 0)}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5}>No sites available.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
