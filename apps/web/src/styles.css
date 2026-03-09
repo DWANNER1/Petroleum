@@ -1395,3 +1395,152 @@ select {
   cursor: pointer;
   text-decoration: underline;
 }
+
+.admin-hud-shell {
+  color: #1f3342;
+}
+
+.admin-hud-hero {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(126, 180, 212, 0.18), transparent 30%),
+    linear-gradient(180deg, #f5fbff 0%, #e6f2f8 100%);
+  border: 1px solid #c9dce8;
+  box-shadow: 0 18px 40px rgba(34, 74, 96, 0.14);
+}
+
+.admin-hud-hero::after {
+  background-image:
+    linear-gradient(rgba(92, 135, 161, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(92, 135, 161, 0.08) 1px, transparent 1px);
+  opacity: 0.4;
+}
+
+.admin-kicker,
+.admin-hud .left-section-title,
+.admin-hud .admin-panel-label,
+.admin-hud-title-wrap p,
+.admin-stat-card span,
+.admin-stat-card em,
+.admin-signal-card span,
+.admin-signal-card em,
+.tank-chart-kicker,
+.tank-chart-header p,
+.tank-chart-metrics span,
+.tank-chart-metrics em,
+.tank-chart-yaxis,
+.tank-chart-xaxis {
+  color: #59758a;
+}
+
+.admin-hud-title-wrap h2,
+.admin-stat-card strong,
+.admin-signal-card strong,
+.admin-work-head h3,
+.tank-chart-header h3,
+.tank-chart-metrics strong {
+  color: #173447;
+}
+
+.admin-stat-card,
+.admin-hud-panel,
+.admin-banner,
+.tank-chart-card,
+.tank-trends-control-card {
+  border: 1px solid #c9dce8;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f9fc 100%);
+  box-shadow: 0 14px 32px rgba(34, 74, 96, 0.12);
+}
+
+.admin-nav-panel {
+  background:
+    radial-gradient(circle at top, rgba(116, 170, 202, 0.14), transparent 35%),
+    linear-gradient(180deg, #ffffff 0%, #eef6fa 100%);
+}
+
+.admin-hud input,
+.admin-hud select,
+.admin-hud button,
+.tank-trends-control-card select {
+  border: 1px solid #c8dbe7;
+  background: linear-gradient(180deg, #ffffff 0%, #f5fbff 100%);
+  color: #173447;
+}
+
+.admin-hud input::placeholder {
+  color: #7890a2;
+}
+
+.admin-hud .left-panel-btn-active,
+.admin-hud .admin-hud-cta {
+  background: linear-gradient(180deg, #7bb4d6 0%, #4e88ad 100%);
+  color: #ffffff;
+  border-color: #5d94b7;
+}
+
+.admin-hud button,
+.admin-alert-link {
+  color: #234b64;
+}
+
+.admin-signal-card,
+.tank-chart-metrics div,
+.admin-work-status,
+.admin-hud-subtle,
+.admin-empty-state,
+.admin-empty-mini,
+.portfolio-map-fallback,
+.tank-trends-control-card {
+  background: #edf5f9;
+  border: 1px solid #d2e2eb;
+  color: #355468;
+}
+
+.admin-radar {
+  background:
+    radial-gradient(circle, rgba(120, 175, 206, 0.22) 0%, rgba(120, 175, 206, 0.06) 36%, transparent 37%),
+    conic-gradient(from 220deg, rgba(94, 146, 175, 0) 0deg, rgba(94, 146, 175, 0.85) 82deg, rgba(94, 146, 175, 0.08) 150deg, rgba(94, 146, 175, 0.45) 218deg, rgba(94, 146, 175, 0) 360deg);
+  box-shadow: inset 0 0 40px rgba(120, 175, 206, 0.1);
+}
+
+.admin-radar-ring {
+  border-color: rgba(94, 146, 175, 0.24);
+}
+
+.admin-radar-core {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(94, 146, 175, 0.28);
+  box-shadow: 0 0 0 10px rgba(94, 146, 175, 0.08);
+}
+
+.admin-radar-core span {
+  color: #688196;
+}
+
+.admin-radar-core strong {
+  color: #173447;
+}
+
+.admin-banner-success {
+  color: #235f3a;
+}
+
+.admin-banner-error {
+  color: #9c3c35;
+}
+
+.tank-chart-grid line.tank-chart-grid {
+  stroke: rgba(99, 136, 159, 0.18);
+}
+
+.tank-chart-area {
+  fill: rgba(109, 177, 215, 0.28);
+}
+
+.tank-chart-line {
+  stroke: #4f88ad;
+}
+
+.tank-chart-refill {
+  fill: #ffffff;
+  stroke: #4f88ad;
+}
