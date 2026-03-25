@@ -16,10 +16,17 @@ Run `Petroleum` locally when needed, and keep the public deployment state on **R
 - More recent pushed commits after the original handoff:
   - `1fb6a72` - `Update auth, pricing dashboard, and admin workflows`
   - `0843bba` - `Reduce local SQL dump tank history density`
+  - `a807a56` - `Add pricing handoff and regional fuel cards`
 - `petroleum-local.sql` was reduced from roughly `79 MB` to roughly `13 MB` by thinning tank history from `5-minute` intervals to `30-minute` intervals.
 - Local git identity observed in this environment:
   - `user.name = DWANNER1`
   - `user.email = 114098810+DWANNER1@users.noreply.github.com`
+- Current local worktree is **not clean**. Uncommitted files at handoff time:
+  - `apps/api/src/server.js`
+  - `apps/web/src/api.js`
+  - `apps/web/src/pricing/pages/PricingPage.tsx`
+  - `apps/web/src/pricing/services/marketDataService.ts`
+  - `apps/web/src/pricing/types/market.ts`
 
 ## Local Runtime Status
 - PostgreSQL is installed locally via Chocolatey.
@@ -42,6 +49,15 @@ Run `Petroleum` locally when needed, and keep the public deployment state on **R
 ```powershell
 $env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
 $env:PGSSL='disable'
+```
+
+- Important OPIS startup note:
+  - the local API must also be started with OPIS credentials in env vars for the OPIS tab to work
+  - use:
+
+```powershell
+$env:OPIS_USERNAME='...'
+$env:OPIS_PASSWORD='...'
 ```
 
 ## Public Deployment Status
@@ -111,7 +127,44 @@ $env:PGSSL='disable'
   - `West Coast`
 - KPI sparkline tooltips now use real EIA date anchors instead of synthetic `1, 2, 3...` labels.
 
-### 5. Prior functional changes from the earlier session still exist
+### 5. OPIS Rack API integration added
+- OPIS credentials were tested successfully against:
+  - `POST https://rackapi.opisnet.com/api/v1/Authenticate`
+- Verified working OPIS endpoints included:
+  - `Country`
+  - `City`
+  - `Product`
+  - `BenchmarkType`
+  - `Summary?timing=0`
+- New local API route added:
+  - `GET /market/opis`
+- Current OPIS route behavior:
+  - authenticates to OPIS using `OPIS_USERNAME` and `OPIS_PASSWORD`
+  - fetches OPIS metadata and summary data
+  - returns current OPIS rows plus timing snapshots for comparison
+- Frontend OPIS tab was added as a third Pricing section beside `Prices` and `Trends`
+- Current OPIS view work includes:
+  - top filter area for `Timing`, `State`, and `City`
+  - grouped product filters with select-all / clear-all
+  - timing comparison chart
+  - OPIS commentary cards
+  - live wholesale rack summary table
+
+### 6. OPIS UI issue remains unresolved at handoff
+- The OPIS `Apply Filters` control has been reworked multiple times and is present in code.
+- Despite rebuilds and local web restarts, the user still reported:
+  - the action button is barely visible or blank
+  - the action area is not clickable in the browser
+- Most likely next step for a new agent:
+  - inspect the live DOM/CSS in-browser rather than continuing blind layout edits
+  - look for a global overlay, stacking-context issue, masked text color, or another app-level style affecting controls inside the OPIS section
+- The latest intent of the OPIS layout is:
+  - selectors on top
+  - grouped/shaded product filters below
+  - one dedicated action bar with `Apply Filters`
+  - data sections below
+
+### 7. Prior functional changes from the earlier session still exist
 - Tank review UI and charts
 - revised Work Queue incident behavior
 - brighter dropdown styling
@@ -128,6 +181,10 @@ $env:PGSSL='disable'
 - Verified live pricing payload included:
   - benchmark keys: `wti, brent, gasoline, regular, midgrade, premium, diesel`
   - regional sets for `regular` and `diesel`: `NUS, R10, R20, R30, R40, R50`
+- OPIS auth and API were also verified locally:
+  - successful OPIS auth response on `March 25, 2026`
+  - local `/market/opis` returned live data
+  - route currently returns full OPIS rows and timing snapshots
 - Earlier tank validations from the original handoff still apply, but note the local SQL dump was later thinned back to `30-minute` history.
 
 ## Railway Database Reseed Status
@@ -160,6 +217,8 @@ cd C:\Users\deepa\source\repos\Petroleum
 
 $env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
 $env:PGSSL='disable'
+$env:OPIS_USERNAME='...'
+$env:OPIS_PASSWORD='...'
 
 npm.cmd --workspace apps/api run dev
 npm.cmd --workspace apps/web run dev
@@ -198,6 +257,12 @@ npm.cmd --workspace apps/api run seed
   - forward curves are still mock data
   - `Update now` triggers a fresh dashboard reload, but only EIA-backed sections are truly live
   - if the Pricing page stops updating, check whether the API was started without `DATABASE_URL` and `PGSSL`
+- OPIS notes:
+  - current live OPIS route is `GET /market/opis`
+  - it depends on `OPIS_USERNAME` and `OPIS_PASSWORD`
+  - OPIS metadata and summary endpoints are reachable with the tested account
+  - the OPIS tab is partly complete but still has a user-reported control-rendering issue around the `Apply Filters` action
+  - a new agent should begin by inspecting the live page in-browser rather than making another blind styling pass
 - EIA key note:
   - an EIA API key was provided in chat during this session, but the current implementation does **not** depend on it because the route is scraping EIA public `LeafHandler` history pages
   - if a future agent moves to official EIA API endpoints, store the key in env vars and remove it from chat-dependent workflow

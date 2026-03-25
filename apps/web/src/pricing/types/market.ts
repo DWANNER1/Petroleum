@@ -4,6 +4,7 @@ export type CurveStructure = "Backwardation" | "Contango" | "Flat";
 export type TrendDirection = "Rising" | "Falling" | "Stable";
 export type OutlookBias = "Tightening" | "Neutral" | "Loosening";
 export type ConfidenceLevel = "Low" | "Medium" | "High";
+export type OpisFuelFilter = "all" | "gasoline" | "diesel" | "biodiesel";
 
 export interface BenchmarkHistoryAnchor {
   date: string;
@@ -129,4 +130,95 @@ export interface PricingDashboardData {
   forwardCurves: ForwardCurveSeries[];
   insightSummary: MarketInsightSummary;
   sourceCoverage: SourceCoverageItem[];
+}
+
+export interface OpisFilterOption {
+  value: string;
+  label: string;
+}
+
+export interface OpisSummaryRow {
+  cityId: number;
+  cityName: string;
+  stateAbbr: string;
+  stateName: string;
+  countryName: string;
+  productId: number;
+  productName: string;
+  fuelType: string;
+  branded: string;
+  grossNet: string;
+  price: number;
+  currencyUnit: string;
+  effectiveDate: string;
+  benchmarkTypeName: string;
+  benchmarkTimingType: string;
+}
+
+export interface OpisMarketSnapshot {
+  lastUpdated: string;
+  appliedFilters: {
+    timing: string;
+    state: string;
+    fuelType: OpisFuelFilter;
+  };
+  filterOptions: {
+    timing: OpisFilterOption[];
+    states: OpisFilterOption[];
+    fuelTypes: OpisFilterOption[];
+  };
+  coverage: {
+    countries: number;
+    cities: number;
+    products: number;
+    benchmarkTypes: number;
+  };
+  metrics: {
+    rowCount: number;
+    stateCount: number;
+    cityCount: number;
+    averagePrice: number | null;
+    gasolineAverage: number | null;
+    dieselAverage: number | null;
+    biodieselAverage: number | null;
+    effectiveDate: string | null;
+  };
+  highlights: {
+    lowest: OpisSummaryRow[];
+    highest: OpisSummaryRow[];
+  };
+  charts: {
+    timingComparison: Array<{
+      timing: string;
+      label: string;
+      averagePrice: number | null;
+      gasolineAverage: number | null;
+      dieselAverage: number | null;
+      rowCount: number;
+    }>;
+    stateAverages: Array<{
+      stateAbbr: string;
+      averagePrice: number;
+      gasolineAverage: number | null;
+      dieselAverage: number | null;
+      rowCount: number;
+    }>;
+    productAverages: Array<{
+      productName: string;
+      fuelType: string;
+      averagePrice: number;
+      rowCount: number;
+    }>;
+  };
+  timingSnapshots: Array<{
+    timing: string;
+    label: string;
+    rows: OpisSummaryRow[];
+  }>;
+  commentary: {
+    summary: string[];
+    outlook: string[];
+  };
+  rows: OpisSummaryRow[];
+  notes: string[];
 }

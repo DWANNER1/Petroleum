@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Legend,
   Line,
@@ -22,6 +24,8 @@ import {
   formatDateLabel,
   getSeriesColor
 } from "../utils/marketCalculations";
+import { getOpisMarketData } from "../services/marketDataService";
+import type { OpisFuelFilter, OpisMarketSnapshot, OpisSummaryRow } from "../types/market";
 
 const PRICE_SERIES: Array<{ key: BenchmarkKey; label: string }> = [
   { key: "wti", label: "WTI" },
@@ -31,6 +35,147 @@ const PRICE_SERIES: Array<{ key: BenchmarkKey; label: string }> = [
 ];
 
 const TIMEFRAME_OPTIONS = ["7D", "30D", "90D", "1Y"] as const;
+
+function formatOpisPrice(value: number | null, unit = "USCPG") {
+  if (value == null) return "n/a";
+  return `${value.toFixed(2)} ${unit}`;
+}
+
+function formatOpisDateTime(value: string) {
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function OpisHighlightList({ title, rows }: { title: string; rows: OpisSummaryRow[] }) {
+  return (
+    <div className="rounded-2xl border border-energy-border bg-slate-50 p-4">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">{title}</div>
+      <div className="mt-3 space-y-3">
+        {rows.map((row) => (
+          <div key={`${title}-${row.cityId}-${row.productId}`} className="flex items-start justify-between gap-4 text-sm">
+            <div>
+              <div className="font-semibold text-energy-ink">{row.cityName}, {row.stateAbbr}</div>
+              <div className="text-energy-slate">{row.productName}</div>
+            </div>
+            <div className="text-right">
+              <div className="font-semibold text-energy-ink">{formatOpisPrice(row.price, row.currencyUnit)}</div>
+              <div className="text-xs text-energy-slate">{row.grossNet}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function averageOpisRows(rows: OpisSummaryRow[], fuelType?: string) {
+  const filtered = fuelType ? rows.filter((row) => row.fuelType === fuelType) : rows;
+  if (!filtered.length) return null;
+  return filtered.reduce((sum, row) => sum + row.price, 0) / filtered.length;
+}
+
+function filterOpisRows(rows: OpisSummaryRow[], city: string, products: string[]) {
+  return rows.filter((row) => {
+    const cityLabel = `${row.cityName}, ${row.stateAbbr}`;
+    const cityMatch = city === "ALL" || cityLabel === city;
+    const productMatch = products.includes(row.productName);
+    return cityMatch && productMatch;
+  });
+}
+
+function buildOpisCommentary(
+  rows: OpisSummaryRow[],
+  selectedCity: string,
+  selectedProducts: string[],
+  primaryTiming?: { label: string; averagePrice: number | null },
+  compareTiming?: { label: string; averagePrice: number | null }
+) {
+  if (!rows.length) {
+    return {
+      summary: ["No OPIS rows match the current city and product filters."],
+      outlook: ["Broaden the city or product selection to restore the comparison view."]
+    };
+  }
+
+  const sorted = [...rows].sort((a, b) => b.price - a.price);
+  const highest = sorted[0];
+  const lowest = sorted[sorted.length - 1];
+  const averagePrice = averageOpisRows(rows);
+  const gasolineAverage = averageOpisRows(rows, "Gasoline");
+  const dieselAverage = averageOpisRows(rows, "Distillate");
+  const spread = gasolineAverage != null && dieselAverage != null ? dieselAverage - gasolineAverage : null;
+  const timingDelta = primaryTiming?.averagePrice != null && compareTiming?.averagePrice != null
+    ? primaryTiming.averagePrice - compareTiming.averagePrice
+    : null;
+  const cityLabel = selectedCity === "ALL" ? "all returned cities" : selectedCity;
+
+  return {
+    summary: [
+      `The filtered OPIS table contains ${rows.length.toLocaleString("en-US")} rows across ${cityLabel} and ${selectedProducts.length.toLocaleString("en-US")} selected product filters.`,
+      `Average returned rack pricing is ${(averagePrice || 0).toFixed(2)} USCPG, with the current range running from ${lowest.cityName}, ${lowest.stateAbbr} at ${lowest.price.toFixed(2)} USCPG up to ${highest.cityName}, ${highest.stateAbbr} at ${highest.price.toFixed(2)} USCPG.`,
+      spread == null
+        ? "The current filter set does not include enough gasoline and diesel rows to show a fuel spread."
+        : spread > 0
+          ? `Diesel is averaging ${spread.toFixed(2)} USCPG above gasoline in the current OPIS filter set.`
+          : `Gasoline is averaging ${Math.abs(spread).toFixed(2)} USCPG above diesel in the current OPIS filter set.`
+    ],
+    outlook: [
+      timingDelta == null
+        ? "The selected timing pair does not have enough overlap to produce a clean comparison."
+        : timingDelta > 0
+          ? `${primaryTiming?.label} pricing is running ${timingDelta.toFixed(2)} USCPG above ${compareTiming?.label}, which points to a firmer prompt wholesale tone.`
+          : timingDelta < 0
+            ? `${primaryTiming?.label} pricing is running ${Math.abs(timingDelta).toFixed(2)} USCPG below ${compareTiming?.label}, which suggests the current rack tone is softer than the comparison timing.`
+            : `${primaryTiming?.label} and ${compareTiming?.label} are effectively flat versus each other in the current selection.`,
+      "Use the city selector to narrow the rack table to one market center, then tighten the product checkboxes to compare only the product slate you actually buy."
+    ]
+  };
+}
+
+function fuelCardTone(label: string) {
+  if (/diesel/i.test(label)) return "border-rose-200 bg-rose-50";
+  if (/gasoline|premium|midgrade|regular/i.test(label)) return "border-amber-200 bg-amber-50";
+  if (/crude|brent|wti/i.test(label)) return "border-blue-200 bg-blue-50";
+  if (/stocks/i.test(label)) return "border-slate-200 bg-slate-50";
+  return "border-energy-border bg-white";
+}
+
+function fuelGroupTone(fuelType: string) {
+  if (/biodiesel/i.test(fuelType)) return "border-emerald-200 bg-emerald-50";
+  if (/distillate|diesel/i.test(fuelType)) return "border-rose-200 bg-rose-50";
+  if (/gasoline/i.test(fuelType)) return "border-amber-200 bg-amber-50";
+  return "border-slate-200 bg-slate-50";
+}
+
+function OpisTooltip({
+  active,
+  payload,
+  label
+}: {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; color: string }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-2xl border border-energy-border bg-white p-3 shadow-energy">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-energy-slate">{label}</div>
+      <div className="space-y-1 text-sm">
+        {payload.map((item) => (
+          <div key={item.name} className="flex items-center justify-between gap-4">
+            <span className="font-medium" style={{ color: item.color }}>{item.name}</span>
+            <span className="text-energy-ink">{Number(item.value).toFixed(2)} USCPG</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function ToggleGroup({
   options,
@@ -147,7 +292,17 @@ export function PricingPage() {
     gasoline: true,
     diesel: true
   });
-  const [activeView, setActiveView] = useState<"prices" | "trends">("prices");
+  const [activeView, setActiveView] = useState<"prices" | "trends" | "opis">("prices");
+  const [opisStatus, setOpisStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [opisData, setOpisData] = useState<OpisMarketSnapshot | null>(null);
+  const [opisTiming, setOpisTiming] = useState("0");
+  const [opisState, setOpisState] = useState("ALL");
+  const [pendingOpisCity, setPendingOpisCity] = useState("ALL");
+  const [appliedOpisCity, setAppliedOpisCity] = useState("ALL");
+  const [pendingOpisProducts, setPendingOpisProducts] = useState<string[]>([]);
+  const [appliedOpisProducts, setAppliedOpisProducts] = useState<string[]>([]);
+  const [primaryTiming, setPrimaryTiming] = useState("0");
+  const [compareTiming, setCompareTiming] = useState("1");
 
   async function load() {
     setStatus("loading");
@@ -162,6 +317,115 @@ export function PricingPage() {
   useEffect(() => {
     load();
   }, []);
+
+  async function loadOpis(nextFilters = { timing: opisTiming, state: opisState, fuelType: "all" as OpisFuelFilter }) {
+    setOpisStatus("loading");
+    try {
+      const snapshot = await getOpisMarketData(nextFilters);
+      setOpisData(snapshot);
+      setOpisStatus("ready");
+    } catch (_error) {
+      setOpisStatus("error");
+    }
+  }
+
+  useEffect(() => {
+    if (activeView !== "opis") return;
+    loadOpis();
+  }, [activeView]);
+
+  const opisProductOptions = useMemo(() => {
+    if (!opisData) return [];
+    const grouped = new Map<string, { count: number; fuelType: string }>();
+    opisData.rows.forEach((row) => {
+      const current = grouped.get(row.productName);
+      grouped.set(row.productName, {
+        count: (current?.count || 0) + 1,
+        fuelType: current?.fuelType || row.fuelType
+      });
+    });
+    return [...grouped.entries()]
+      .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+      .slice(0, 12)
+      .map(([value, meta]) => ({ value, label: value, count: meta.count, fuelType: meta.fuelType }));
+  }, [opisData]);
+
+  const opisProductGroups = useMemo(() => {
+    const grouped = new Map<string, Array<{ value: string; label: string; count: number; fuelType: string }>>();
+    opisProductOptions.forEach((option) => {
+      if (!grouped.has(option.fuelType)) grouped.set(option.fuelType, []);
+      grouped.get(option.fuelType)?.push(option);
+    });
+    return [...grouped.entries()];
+  }, [opisProductOptions]);
+
+  useEffect(() => {
+    if (!opisProductOptions.length) return;
+    const allProducts = opisProductOptions.map((option) => option.value);
+    setPendingOpisProducts(allProducts);
+    setAppliedOpisProducts(allProducts);
+  }, [opisProductOptions]);
+
+  useEffect(() => {
+    if (primaryTiming === compareTiming) {
+      const fallback = (opisData?.filterOptions.timing || []).find((option) => option.value !== primaryTiming)?.value || primaryTiming;
+      setCompareTiming(fallback);
+    }
+  }, [primaryTiming, compareTiming, opisData]);
+
+  const opisCityOptions = useMemo(() => {
+    if (!opisData) return [];
+    return [
+      { value: "ALL", label: "All Cities" },
+      ...[...new Map(opisData.rows.map((row) => [`${row.cityName}, ${row.stateAbbr}`, { value: `${row.cityName}, ${row.stateAbbr}`, label: `${row.cityName}, ${row.stateAbbr}` }])).values()]
+        .sort((a, b) => a.label.localeCompare(b.label))
+    ];
+  }, [opisData]);
+
+  const filteredOpisRows = useMemo(() => {
+    if (!opisData) return [];
+    return filterOpisRows(opisData.rows, appliedOpisCity, appliedOpisProducts);
+  }, [opisData, appliedOpisCity, appliedOpisProducts]);
+
+  const opisFilteredCommentary = useMemo(() => {
+    const timingRows = opisData?.charts.timingComparison || [];
+    const primary = timingRows.find((item) => item.timing === primaryTiming);
+    const compare = timingRows.find((item) => item.timing === compareTiming);
+    return buildOpisCommentary(filteredOpisRows, appliedOpisCity, appliedOpisProducts, primary, compare);
+  }, [filteredOpisRows, appliedOpisCity, appliedOpisProducts, opisData, primaryTiming, compareTiming]);
+
+  const opisTimingChartData = useMemo(() => {
+    const primaryRows = filterOpisRows(
+      (opisData?.timingSnapshots.find((item) => item.timing === primaryTiming)?.rows || []),
+      appliedOpisCity,
+      appliedOpisProducts
+    );
+    const compareRows = filterOpisRows(
+      (opisData?.timingSnapshots.find((item) => item.timing === compareTiming)?.rows || []),
+      appliedOpisCity,
+      appliedOpisProducts
+    );
+    return [
+      {
+        category: "Overall Avg",
+        primary: averageOpisRows(primaryRows),
+        compare: averageOpisRows(compareRows)
+      },
+      {
+        category: "Gasoline Avg",
+        primary: averageOpisRows(primaryRows, "Gasoline"),
+        compare: averageOpisRows(compareRows, "Gasoline")
+      },
+      {
+        category: "Diesel Avg",
+        primary: averageOpisRows(primaryRows, "Distillate"),
+        compare: averageOpisRows(compareRows, "Distillate")
+      }
+    ];
+  }, [opisData, primaryTiming, compareTiming, appliedOpisCity, appliedOpisProducts]);
+
+  const opisHighestRows = useMemo(() => [...filteredOpisRows].sort((a, b) => b.price - a.price).slice(0, 5), [filteredOpisRows]);
+  const opisLowestRows = useMemo(() => [...filteredOpisRows].sort((a, b) => a.price - b.price).slice(0, 5), [filteredOpisRows]);
 
   const filteredHistory = useMemo(() => (data ? filterPriceHistory(data.priceHistory, timeframe) : []), [data, timeframe]);
   const inventorySeries = useMemo(() => (data ? buildInventoryModeSeries(data.inventorySeries, inventoryMode) : []), [data, inventoryMode]);
@@ -231,11 +495,12 @@ export function PricingPage() {
                 <select
                   id="pricing-section"
                   value={activeView}
-                  onChange={(event) => setActiveView(event.target.value as "prices" | "trends")}
+                  onChange={(event) => setActiveView(event.target.value as "prices" | "trends" | "opis")}
                   className="w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
                 >
                   <option value="prices">Prices</option>
                   <option value="trends">Trends</option>
+                  <option value="opis">OPIS</option>
                 </select>
               </div>
               <div className="mt-4">
@@ -259,7 +524,11 @@ export function PricingPage() {
         {activeView === "prices" ? (
           <section className="space-y-6">
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-              {data.benchmarkCards.map((card) => <KpiCard key={card.key} card={card} />)}
+              {data.benchmarkCards.map((card) => (
+                <div key={card.key} className={`rounded-[28px] border p-[1px] ${fuelCardTone(card.label)}`}>
+                  <KpiCard card={card} />
+                </div>
+              ))}
             </section>
 
             <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
@@ -295,7 +564,7 @@ export function PricingPage() {
               </div>
             </section>
           </section>
-        ) : (
+        ) : activeView === "trends" ? (
           <section className="space-y-6">
             <ChartPanel
               title="Price Trends"
@@ -400,6 +669,291 @@ export function PricingPage() {
                 </ResponsiveContainer>
               </div>
             </ChartPanel>
+          </section>
+        ) : (
+          <section className="space-y-6">
+            <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <label className="block">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">Timing</div>
+                  <select
+                    value={opisTiming}
+                    onChange={(event) => setOpisTiming(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
+                  >
+                    {(opisData?.filterOptions.timing || []).map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">State</div>
+                  <select
+                    value={opisState}
+                    onChange={(event) => setOpisState(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
+                  >
+                    {(opisData?.filterOptions.states || []).map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">City</div>
+                  <select
+                    value={pendingOpisCity}
+                    onChange={(event) => setPendingOpisCity(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
+                  >
+                    {opisCityOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="mt-5 rounded-2xl border border-energy-border bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">Products</div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPendingOpisProducts(opisProductOptions.map((option) => option.value))}
+                      className="rounded-full border border-energy-border bg-white px-3 py-1 text-xs font-semibold text-energy-ink"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingOpisProducts([])}
+                      className="rounded-full border border-energy-border bg-white px-3 py-1 text-xs font-semibold text-energy-ink"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 space-y-4">
+                  {opisProductGroups.map(([fuelType, options]) => (
+                    <div key={fuelType} className={`rounded-2xl border p-4 ${fuelGroupTone(fuelType)}`}>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">{fuelType}</div>
+                      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                        {options.map((option) => {
+                          const checked = pendingOpisProducts.includes(option.value);
+                          return (
+                            <label key={option.value} className="flex items-start gap-3 rounded-2xl border border-white/70 bg-white/90 px-3 py-3 text-sm text-energy-ink">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  setPendingOpisProducts((current) => (
+                                    current.includes(option.value)
+                                      ? current.filter((item) => item !== option.value)
+                                      : [...current, option.value]
+                                  ));
+                                }}
+                                className="mt-1 h-4 w-4 rounded border-energy-border text-energy-blue"
+                              />
+                              <span>
+                                <span className="block font-medium">{option.label}</span>
+                                <span className="block text-xs text-energy-slate">{option.count} returned rows</span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-5 rounded-2xl border-2 border-slate-900 bg-white p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm font-medium text-energy-ink">
+                    Apply the selected timing, state, city, and product filters to all OPIS data below.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAppliedOpisCity(pendingOpisCity);
+                      setAppliedOpisProducts([...pendingOpisProducts]);
+                      loadOpis({ timing: opisTiming, state: opisState, fuelType: "all" });
+                    }}
+                    style={{
+                      minHeight: "56px",
+                      minWidth: "240px",
+                      backgroundColor: "#111827",
+                      color: "#ffffff",
+                      border: "2px solid #111827",
+                      borderRadius: "18px",
+                      fontSize: "15px",
+                      fontWeight: 700,
+                      padding: "0 24px",
+                      cursor: "pointer",
+                      position: "relative",
+                      zIndex: 40
+                    }}
+                  >
+                    {opisStatus === "loading" ? "Refreshing..." : "Apply Filters"}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 text-sm text-energy-slate">
+                Source: <span className="font-medium text-energy-ink">OPIS Rack API</span>
+                {opisData ? <span> | Last refreshed {formatOpisDateTime(opisData.lastUpdated)}</span> : null}
+              </div>
+            </section>
+
+            {opisStatus === "loading" && !opisData ? (
+              <section className="rounded-3xl border border-energy-border bg-white p-10 text-center text-energy-slate shadow-energy">
+                Loading OPIS rack market data...
+              </section>
+            ) : null}
+
+            {opisStatus === "error" ? (
+              <section className="rounded-3xl border border-rose-200 bg-white p-10 text-center shadow-energy">
+                <div className="text-lg font-semibold text-energy-ink">OPIS data is unavailable.</div>
+                <p className="mt-2 text-sm text-energy-slate">
+                  Check that the API was started with `OPIS_USERNAME` and `OPIS_PASSWORD`, then try again.
+                </p>
+              </section>
+            ) : null}
+
+            {opisData ? (
+              <>
+                <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  {[
+                    { label: "Returned Rows", value: opisData.metrics.rowCount.toLocaleString("en-US"), detail: `${opisData.metrics.stateCount} states / ${opisData.metrics.cityCount} cities` },
+                    { label: "Average Price", value: formatOpisPrice(opisData.metrics.averagePrice), detail: opisData.metrics.effectiveDate ? formatDateLabel(opisData.metrics.effectiveDate.slice(0, 10)) : "n/a" },
+                    { label: "Gasoline Avg", value: formatOpisPrice(opisData.metrics.gasolineAverage), detail: "Selected OPIS market set" },
+                    { label: "Diesel Avg", value: formatOpisPrice(opisData.metrics.dieselAverage), detail: `${opisData.coverage.products} subscribed products` }
+                  ].map((item) => (
+                    <article key={item.label} className="rounded-3xl border border-energy-border bg-white p-5 shadow-energy">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">{item.label}</div>
+                      <div className="mt-3 text-3xl font-semibold text-energy-ink">{item.value}</div>
+                      <div className="mt-2 text-sm text-energy-slate">{item.detail}</div>
+                    </article>
+                  ))}
+                </section>
+
+                <section className="grid gap-6">
+                  <ChartPanel
+                    title="Timing Comparison"
+                    description="Selected timing averages for the current city and product filter."
+                    actions={
+                    <div className="flex flex-wrap gap-3">
+                        <select
+                          value={primaryTiming}
+                          onChange={(event) => setPrimaryTiming(event.target.value)}
+                          className="rounded-2xl border border-energy-border bg-white px-4 py-2 text-sm font-semibold text-energy-ink outline-none"
+                        >
+                          {(opisData.filterOptions.timing || []).map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={compareTiming}
+                          onChange={(event) => setCompareTiming(event.target.value)}
+                          className="rounded-2xl border border-energy-border bg-white px-4 py-2 text-sm font-semibold text-energy-ink outline-none"
+                        >
+                          {(opisData.filterOptions.timing || []).filter((option) => option.value !== primaryTiming).map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    }
+                    bodyClassName="min-h-[380px] w-full overflow-hidden"
+                    titlePopover={
+                      <div className="space-y-3">
+                        {opisFilteredCommentary.summary.map((line) => <p key={line}>{line}</p>)}
+                      </div>
+                    }
+                  >
+                    <ResponsiveContainer width="100%" height={320}>
+                      <BarChart data={opisTimingChartData} margin={{ top: 12, right: 20, left: 20, bottom: 4 }} barGap={18}>
+                        <CartesianGrid stroke="#e6edf3" strokeDasharray="3 3" />
+                        <XAxis dataKey="category" tick={{ fontSize: 12, fill: "#5f7389" }} />
+                        <YAxis tick={{ fontSize: 12, fill: "#5f7389" }} width={70} />
+                        <Tooltip content={<OpisTooltip />} />
+                        <Legend />
+                        <Bar dataKey="primary" name={(opisData.filterOptions.timing || []).find((option) => option.value === primaryTiming)?.label || primaryTiming} fill="#275df5" radius={[8, 8, 0, 0]} />
+                        <Bar dataKey="compare" name={(opisData.filterOptions.timing || []).find((option) => option.value === compareTiming)?.label || compareTiming} fill="#0f8d8d" radius={[8, 8, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </ChartPanel>
+                </section>
+
+                <section className="grid gap-6">
+                  <div className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">Rack Summary</div>
+                      <h3 className="mt-2 text-xl font-semibold text-energy-ink">Live wholesale rack price table</h3>
+                    </div>
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-energy-border text-left text-[11px] uppercase tracking-[0.14em] text-energy-slate">
+                            <th className="pb-3 pr-4">Market</th>
+                            <th className="pb-3 pr-4">Product</th>
+                            <th className="pb-3 pr-4">Fuel</th>
+                            <th className="pb-3 pr-4">Price</th>
+                            <th className="pb-3 pr-4">Type</th>
+                            <th className="pb-3 pr-4">Timing</th>
+                            <th className="pb-3">Effective</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredOpisRows.map((row) => (
+                            <tr key={`${row.cityId}-${row.productId}-${row.branded}-${row.grossNet}`} className="border-b border-slate-100 align-top">
+                              <td className="py-3 pr-4">
+                                <div className="font-semibold text-energy-ink">{row.cityName}, {row.stateAbbr}</div>
+                                <div className="text-energy-slate">{row.countryName}</div>
+                              </td>
+                              <td className="py-3 pr-4 text-energy-ink">{row.productName}</td>
+                              <td className="py-3 pr-4 text-energy-slate">{row.fuelType}</td>
+                              <td className="py-3 pr-4 font-semibold text-energy-ink">{formatOpisPrice(row.price, row.currencyUnit)}</td>
+                              <td className="py-3 pr-4 text-energy-slate">{row.grossNet} / {row.branded}</td>
+                              <td className="py-3 pr-4 text-energy-slate">{row.benchmarkTimingType}</td>
+                              <td className="py-3 text-energy-slate">{formatDateLabel(row.effectiveDate.slice(0, 10))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">What This Feed Covers</div>
+                      <div className="mt-4 space-y-3 text-sm leading-6 text-energy-ink">
+                        {opisData.notes.map((note) => (
+                          <div key={note} className="flex gap-3">
+                            <span className="mt-2 h-2 w-2 rounded-full bg-energy-blue" />
+                            <span>{note}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                    <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">OPIS Commentary</div>
+                      <div className="mt-4 space-y-3 text-sm leading-6 text-energy-ink">
+                        {opisFilteredCommentary.summary.map((line) => (
+                          <div key={line} className="flex gap-3">
+                            <span className="mt-2 h-2 w-2 rounded-full bg-energy-blue" />
+                            <span>{line}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                    <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">Market Read</div>
+                      <div className="mt-4 space-y-3 text-sm leading-6 text-energy-ink">
+                        {opisFilteredCommentary.outlook.map((line) => <p key={line}>{line}</p>)}
+                      </div>
+                    </section>
+                    <OpisHighlightList title="Lowest Returned Markets" rows={opisLowestRows} />
+                    <OpisHighlightList title="Highest Returned Markets" rows={opisHighestRows} />
+                  </div>
+                </section>
+              </>
+            ) : null}
           </section>
         )}
       </div>

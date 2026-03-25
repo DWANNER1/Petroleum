@@ -38,6 +38,25 @@ const EIA_RETAIL_REGIONS = [
   { key: "R50", label: "West Coast" }
 ];
 
+const OPIS_API_BASE_URL = process.env.OPIS_API_BASE_URL || "https://rackapi.opisnet.com/api/v1";
+const OPIS_TIMING_OPTIONS = [
+  { value: "0", label: "Live" },
+  { value: "1", label: "Closing" },
+  { value: "2", label: "Contract" },
+  { value: "3", label: "Calendar" }
+];
+const OPIS_FUEL_TYPE_OPTIONS = [
+  { value: "all", label: "All Fuels" },
+  { value: "gasoline", label: "Gasoline", opisValue: "1" },
+  { value: "diesel", label: "Diesel", opisValue: "2" },
+  { value: "biodiesel", label: "Biodiesel", opisValue: "5" }
+];
+const OPIS_METADATA_CACHE_TTL_MS = 30 * 60 * 1000;
+let opisMetadataCache = {
+  expiresAt: 0,
+  value: null
+};
+
 const MONTHS = {
   Jan: 0,
   Feb: 1,
@@ -260,6 +279,333 @@ async function livePricingSnapshot() {
       inventorySeriesFromPoints({ key: "crude", label: "Crude Stocks", points: crudeStockPoints }),
       inventorySeriesFromPoints({ key: "gasoline", label: "Gasoline Stocks", points: gasolineStockPoints }),
       inventorySeriesFromPoints({ key: "distillate", label: "Distillate Stocks", points: distillateStockPoints })
+    ]
+  };
+}
+
+function opisCredentials() {
+  return {
+    username: process.env.OPIS_USERNAME || "",
+    password: process.env.OPIS_PASSWORD || ""
+  };
+}
+
+async function opisAuthenticate() {
+  const credentials = opisCredentials();
+  if (!credentials.username || !credentials.password) {
+    throw new Error("OPIS credentials are missing. Set OPIS_USERNAME and OPIS_PASSWORD.");
+  }
+
+  const response = await fetch(`${OPIS_API_BASE_URL}/Authenticate`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(credentials)
+  });
+
+  if (!response.ok) {
+    throw new Error(`OPIS auth failed with status ${response.status}`);
+  }
+
+  const payload = await response.json();
+  if (payload?.StatusCode !== 200 || !payload?.Data) {
+    throw new Error(payload?.ErrorMessage || "OPIS auth did not return a bearer token");
+  }
+  return payload.Data;
+}
+
+async function opisRequest(path, token, queryParams = {}) {
+  const url = new URL(`${OPIS_API_BASE_URL}/${path}`);
+  for (const [key, value] of Object.entries(queryParams)) {
+    if (value == null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      accept: "application/json",
+      Authorization: token
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`OPIS request failed (${response.status}) for ${path}`);
+  }
+
+  const payload = await response.json();
+  if (payload?.StatusCode !== 200) {
+    throw new Error(payload?.ErrorMessage || `OPIS request failed for ${path}`);
+  }
+  return payload;
+}
+
+function averageOpisPrice(rows, fuelType) {
+  const filtered = rows.filter((row) => !fuelType || String(row.FuelType).toLowerCase() === fuelType.toLowerCase());
+  if (!filtered.length) return null;
+  return Number((filtered.reduce((sum, row) => sum + Number(row.Price || 0), 0) / filtered.length).toFixed(2));
+}
+
+function averageMappedOpisPrice(rows, fuelType) {
+  const filtered = rows.filter((row) => !fuelType || String(row.fuelType).toLowerCase() === fuelType.toLowerCase());
+  if (!filtered.length) return null;
+  return Number((filtered.reduce((sum, row) => sum + Number(row.price || 0), 0) / filtered.length).toFixed(2));
+}
+
+function mapOpisRow(row) {
+  return {
+    cityId: row.CityID,
+    cityName: row.CityName,
+    stateAbbr: row.StateAbbr,
+    stateName: row.StateName,
+    countryName: row.CountryName,
+    productId: row.ProductID,
+    productName: row.ProductName,
+    fuelType: row.FuelType,
+    branded: row.Branded,
+    grossNet: row.GrossNet,
+    price: Number(row.Price || 0),
+    currencyUnit: row.CurrencyUnit,
+    effectiveDate: row.EffectiveDate,
+    benchmarkTypeName: row.BenchmarkTypeName,
+    benchmarkTimingType: row.BenchmarkTimingType
+  };
+}
+
+function groupOpisStateAverages(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const key = row.stateAbbr;
+    if (!grouped.has(key)) {
+      grouped.set(key, []);
+    }
+    grouped.get(key).push(row);
+  }
+  return [...grouped.entries()]
+    .map(([stateAbbr, stateRows]) => ({
+      stateAbbr,
+      averagePrice: averageMappedOpisPrice(stateRows),
+      gasolineAverage: averageMappedOpisPrice(stateRows, "Gasoline"),
+      dieselAverage: averageMappedOpisPrice(stateRows, "Distillate"),
+      rowCount: stateRows.length
+    }))
+    .filter((item) => item.averagePrice != null)
+    .sort((a, b) => b.averagePrice - a.averagePrice)
+    .slice(0, 10);
+}
+
+function groupOpisProductAverages(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const key = `${row.productName}__${row.fuelType}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, []);
+    }
+    grouped.get(key).push(row);
+  }
+  return [...grouped.entries()]
+    .map(([key, productRows]) => {
+      const [productName, fuelType] = key.split("__");
+      return {
+        productName,
+        fuelType,
+        averagePrice: averageMappedOpisPrice(productRows),
+        rowCount: productRows.length
+      };
+    })
+    .filter((item) => item.averagePrice != null)
+    .sort((a, b) => b.rowCount - a.rowCount || b.averagePrice - a.averagePrice)
+    .slice(0, 8);
+}
+
+function describeOpisMarket({ currentRows, timingComparison, selectedFuelType, state }) {
+  const highest = [...currentRows].sort((a, b) => b.price - a.price)[0] || null;
+  const lowest = [...currentRows].sort((a, b) => a.price - b.price)[0] || null;
+  const live = timingComparison.find((item) => item.timing === "0");
+  const closing = timingComparison.find((item) => item.timing === "1");
+  const contract = timingComparison.find((item) => item.timing === "2");
+  const gasolineAverage = averageMappedOpisPrice(currentRows, "Gasoline");
+  const dieselAverage = averageMappedOpisPrice(currentRows, "Distillate");
+  const spread = gasolineAverage != null && dieselAverage != null ? Number((dieselAverage - gasolineAverage).toFixed(2)) : null;
+  const liveVsClosing = live?.averagePrice != null && closing?.averagePrice != null
+    ? Number((live.averagePrice - closing.averagePrice).toFixed(2))
+    : null;
+  const marketLabel = state === "ALL" ? "the subscribed market set" : state;
+  const fuelLabel = selectedFuelType === "all" ? "all fuels" : selectedFuelType;
+
+  const summary = [
+    `OPIS returned ${currentRows.length.toLocaleString("en-US")} rows for ${fuelLabel} across ${marketLabel}.`,
+    highest && lowest
+      ? `The current returned spread runs from ${lowest.cityName}, ${lowest.stateAbbr} at ${lowest.price.toFixed(2)} ${lowest.currencyUnit} up to ${highest.cityName}, ${highest.stateAbbr} at ${highest.price.toFixed(2)} ${highest.currencyUnit}.`
+      : "The returned market set is too narrow to describe a high-low spread.",
+    spread == null
+      ? "Only one major fuel family is present in the current filter, so no gasoline-versus-diesel spread is shown."
+      : spread > 0
+        ? `Diesel is averaging ${spread.toFixed(2)} USCPG above gasoline in the current OPIS selection.`
+        : `Gasoline is averaging ${Math.abs(spread).toFixed(2)} USCPG above diesel in the current OPIS selection.`
+  ];
+
+  const outlook = [
+    liveVsClosing == null
+      ? "Timing comparisons are limited for this selection, so the page emphasizes current cross-market structure instead of intraday direction."
+      : liveVsClosing > 0
+        ? `Live pricing is ${liveVsClosing.toFixed(2)} USCPG above the closing snapshot, which points to a firmer near-term rack tone.`
+        : liveVsClosing < 0
+          ? `Live pricing is ${Math.abs(liveVsClosing).toFixed(2)} USCPG below the closing snapshot, which suggests the current rack tone is easing versus the prior close.`
+          : "Live and closing pricing are effectively flat, suggesting a steady rack tone versus the prior close.",
+    contract?.averagePrice != null && live?.averagePrice != null
+      ? `Contract timing sits ${Math.abs(live.averagePrice - contract.averagePrice).toFixed(2)} USCPG ${live.averagePrice >= contract.averagePrice ? "below" : "above"} live pricing, giving buyers a quick read on how prompt rack pricing compares with indexed contract levels.`
+      : "Contract timing was not available in a way that changes the read materially for this view."
+  ];
+
+  return { summary, outlook };
+}
+
+async function opisMetadata(token) {
+  if (opisMetadataCache.value && opisMetadataCache.expiresAt > Date.now()) {
+    return opisMetadataCache.value;
+  }
+
+  const [countries, cities, products, benchmarkTypes] = await Promise.all([
+    opisRequest("Country", token),
+    opisRequest("City", token),
+    opisRequest("Product", token),
+    opisRequest("BenchmarkType", token)
+  ]);
+
+  const stateOptions = [...new Map(
+    (cities?.Data?.Cities || [])
+      .map((city) => [city.StateAbbr, { value: city.StateAbbr, label: city.StateName }])
+  ).values()].sort((a, b) => a.label.localeCompare(b.label));
+
+  const value = {
+    countries: countries?.Data?.Countries || [],
+    cities: cities?.Data?.Cities || [],
+    products: products?.Data?.Products || [],
+    benchmarkTypes: benchmarkTypes?.Data?.BenchmarkTypes || [],
+    stateOptions: [
+      { value: "ALL", label: "All States" },
+      ...stateOptions
+    ]
+  };
+
+  opisMetadataCache = {
+    value,
+    expiresAt: Date.now() + OPIS_METADATA_CACHE_TTL_MS
+  };
+  return value;
+}
+
+async function opisMarketSnapshot({ timing = "0", state = "ALL", fuelType = "all" }) {
+  const token = await opisAuthenticate();
+  const metadata = await opisMetadata(token);
+  const selectedFuelType = OPIS_FUEL_TYPE_OPTIONS.find((option) => option.value === fuelType)?.opisValue || "";
+  const requestedState = state === "ALL" ? "" : state;
+  const [summary, ...timingPayloads] = await Promise.all([
+    opisRequest("Summary", token, {
+      timing,
+      State: requestedState,
+      FuelTypes: selectedFuelType
+    }),
+    ...OPIS_TIMING_OPTIONS.filter((option) => option.value !== timing).map((option) =>
+      opisRequest("Summary", token, {
+        timing: option.value,
+        State: requestedState,
+        FuelTypes: selectedFuelType
+      }).catch(() => null)
+    )
+  ]);
+
+  const rows = summary?.Data?.Summaries || [];
+  const mappedRows = rows.map(mapOpisRow);
+  const sortedRows = [...mappedRows].sort((a, b) => b.price - a.price);
+  const uniqueStates = new Set(mappedRows.map((row) => row.stateAbbr));
+  const uniqueCities = new Set(mappedRows.map((row) => `${row.stateAbbr}-${row.cityId}`));
+  const effectiveDate = mappedRows[0]?.effectiveDate || null;
+  const timingComparison = [
+    { value: timing, payload: summary },
+    ...OPIS_TIMING_OPTIONS.filter((option) => option.value !== timing).map((option, index) => ({
+      value: option.value,
+      payload: timingPayloads[index]
+    }))
+  ]
+    .map(({ value, payload }) => {
+      const timingRows = (payload?.Data?.Summaries || []).map(mapOpisRow);
+      return {
+        timing: value,
+        label: OPIS_TIMING_OPTIONS.find((option) => option.value === value)?.label || value,
+        averagePrice: averageMappedOpisPrice(timingRows),
+        gasolineAverage: averageMappedOpisPrice(timingRows, "Gasoline"),
+        dieselAverage: averageMappedOpisPrice(timingRows, "Distillate"),
+        rowCount: timingRows.length
+      };
+    })
+    .filter((item) => item.rowCount > 0);
+  const timingSnapshots = [
+    { value: timing, payload: summary },
+    ...OPIS_TIMING_OPTIONS.filter((option) => option.value !== timing).map((option, index) => ({
+      value: option.value,
+      payload: timingPayloads[index]
+    }))
+  ]
+    .map(({ value, payload }) => ({
+      timing: value,
+      label: OPIS_TIMING_OPTIONS.find((option) => option.value === value)?.label || value,
+      rows: (payload?.Data?.Summaries || []).map(mapOpisRow)
+    }))
+    .filter((item) => item.rows.length > 0);
+  const commentary = describeOpisMarket({
+    currentRows: mappedRows,
+    timingComparison,
+    selectedFuelType: fuelType,
+    state
+  });
+
+  return {
+    lastUpdated: new Date().toISOString(),
+    appliedFilters: {
+      timing,
+      state,
+      fuelType
+    },
+    filterOptions: {
+      timing: OPIS_TIMING_OPTIONS,
+      states: metadata.stateOptions,
+      fuelTypes: OPIS_FUEL_TYPE_OPTIONS.map(({ value, label }) => ({ value, label }))
+    },
+    coverage: {
+      countries: metadata.countries.length,
+      cities: metadata.cities.length,
+      products: metadata.products.length,
+      benchmarkTypes: metadata.benchmarkTypes.length
+    },
+    metrics: {
+      rowCount: mappedRows.length,
+      stateCount: uniqueStates.size,
+      cityCount: uniqueCities.size,
+      averagePrice: averageOpisPrice(rows),
+      gasolineAverage: averageOpisPrice(rows, "Gasoline"),
+      dieselAverage: averageOpisPrice(rows, "Distillate"),
+      biodieselAverage: averageOpisPrice(rows, "Biodiesel"),
+      effectiveDate
+    },
+    highlights: {
+      highest: sortedRows.slice(0, 5),
+      lowest: [...sortedRows].reverse().slice(0, 5)
+    },
+    charts: {
+      timingComparison,
+      stateAverages: groupOpisStateAverages(mappedRows),
+      productAverages: groupOpisProductAverages(mappedRows)
+    },
+    timingSnapshots,
+    commentary,
+    rows: mappedRows,
+    notes: [
+      `Showing ${mappedRows.length} OPIS rack summary rows for ${state === "ALL" ? "all subscribed states" : state}.`,
+      `${OPIS_TIMING_OPTIONS.find((option) => option.value === timing)?.label || "Selected"} timing is active.`,
+      "Prices are returned in the source unit from OPIS. Most U.S. rows are in US cents per gallon."
     ]
   };
 }
@@ -840,6 +1186,19 @@ app.get(
   requireAuth,
   asyncHandler(async (_req, res) => {
     const snapshot = await livePricingSnapshot();
+    res.json(snapshot);
+  })
+);
+
+app.get(
+  "/market/opis",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const snapshot = await opisMarketSnapshot({
+      timing: String(req.query.timing || "0"),
+      state: String(req.query.state || "ALL"),
+      fuelType: String(req.query.fuelType || "all")
+    });
     res.json(snapshot);
   })
 );

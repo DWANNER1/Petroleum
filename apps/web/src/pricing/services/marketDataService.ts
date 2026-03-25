@@ -8,6 +8,8 @@ import type {
   ForwardCurveSeries,
   InventorySeries,
   NarrativeDriverSet,
+  OpisFuelFilter,
+  OpisMarketSnapshot,
   PricingDashboardData
 } from "../types/market";
 import {
@@ -54,4 +56,12 @@ export async function getPricingDashboardData(): Promise<PricingDashboardData> {
     insightSummary: buildInsightSummary(benchmarkCards, inventorySeries, curveSeries, drivers),
     sourceCoverage: drivers.sourceCoverage
   };
+}
+
+export async function getOpisMarketData(params: {
+  timing?: string;
+  state?: string;
+  fuelType?: OpisFuelFilter;
+} = {}): Promise<OpisMarketSnapshot> {
+  return api.getOpisSnapshot(params);
 }
