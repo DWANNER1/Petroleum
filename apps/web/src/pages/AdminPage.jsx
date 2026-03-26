@@ -16,6 +16,8 @@ const emptyConfig = { atgHost: "", atgPort: "10001", atgPollIntervalSec: "60" };
 const emptyTank = { atgTankId: "", label: "", product: "", capacityLiters: "" };
 const emptyPump = { pumpNumber: "", label: "", sideAip: "", sideBip: "", port: "5201" };
 const emptyBranding = { name: "", logoUrl: "" };
+const emptyOpisCredentials = { username: "", password: "" };
+const emptyEiaCredentials = { apiKey: "" };
 
 function workspaceLabel(panel, selectedTankId, selectedPumpId) {
   if (panel === "createStation") return "Create Station";
@@ -48,6 +50,10 @@ export function AdminPage({ user, jobber, onJobberUpdated }) {
   const [tankForm, setTankForm] = useState(emptyTank);
   const [pumpForm, setPumpForm] = useState(emptyPump);
   const [brandingForm, setBrandingForm] = useState(emptyBranding);
+  const [opisCredentialsForm, setOpisCredentialsForm] = useState(emptyOpisCredentials);
+  const [opisCredentialsStatus, setOpisCredentialsStatus] = useState(null);
+  const [eiaCredentialsForm, setEiaCredentialsForm] = useState(emptyEiaCredentials);
+  const [eiaCredentialsStatus, setEiaCredentialsStatus] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [stationCodeError, setStationCodeError] = useState("");
@@ -98,6 +104,23 @@ export function AdminPage({ user, jobber, onJobberUpdated }) {
       logoUrl: jobber?.logoUrl || ""
     });
   }, [jobber]);
+
+  useEffect(() => {
+    if (user?.jobberRole !== "admin") return;
+    (async () => {
+      try {
+        const [opisStatus, eiaStatus] = await Promise.all([
+          api.getJobberOpisCredentialsStatus(),
+          api.getJobberEiaCredentialsStatus()
+        ]);
+        setOpisCredentialsStatus(opisStatus);
+        setEiaCredentialsStatus(eiaStatus);
+      } catch (_err) {
+        setOpisCredentialsStatus(null);
+        setEiaCredentialsStatus(null);
+      }
+    })();
+  }, [user?.jobberRole, jobber?.id]);
 
   useEffect(() => {
     (async () => {
@@ -261,6 +284,37 @@ export function AdminPage({ user, jobber, onJobberUpdated }) {
       });
       onJobberUpdated(updated);
       setMessage("Jobber branding updated.");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function saveOpisCredentials(e) {
+    e.preventDefault();
+    clearStatus();
+    try {
+      const status = await api.saveJobberOpisCredentials({
+        username: opisCredentialsForm.username.trim(),
+        password: opisCredentialsForm.password
+      });
+      setOpisCredentialsStatus(status);
+      setOpisCredentialsForm(emptyOpisCredentials);
+      setMessage("OPIS credentials saved securely for this jobber.");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function saveEiaCredentials(e) {
+    e.preventDefault();
+    clearStatus();
+    try {
+      const status = await api.saveJobberEiaCredentials({
+        apiKey: eiaCredentialsForm.apiKey.trim()
+      });
+      setEiaCredentialsStatus(status);
+      setEiaCredentialsForm(emptyEiaCredentials);
+      setMessage("EIA API key saved securely for this jobber.");
     } catch (err) {
       setError(err.message);
     }
@@ -534,37 +588,92 @@ export function AdminPage({ user, jobber, onJobberUpdated }) {
             </div>
 
             {canManageBranding && activePanel === "branding" && (
-              <form className="admin-form admin-hud-form" onSubmit={saveBranding}>
-                <div className="admin-form-intro">
-                  <strong>Jobber Branding</strong>
-                  <span>Upload the logo that should replace the current mark in the top left corner for this jobber.</span>
-                </div>
-                <input
-                  value={brandingForm.name}
-                  onChange={(e) => setBrandingForm((form) => ({ ...form, name: e.target.value }))}
-                  placeholder="Jobber Name"
-                />
-                <label className="admin-file-field">
-                  <span>Logo Upload</span>
-                  <input type="file" accept="image/*" onChange={(e) => onLogoFileSelected(e.target.files?.[0])} />
-                </label>
-                <input
-                  value={brandingForm.logoUrl}
-                  onChange={(e) => setBrandingForm((form) => ({ ...form, logoUrl: e.target.value }))}
-                  placeholder="Logo URL or data URL"
-                />
-                <div className="admin-brand-preview">
-                  {brandingForm.logoUrl ? (
-                    <img src={brandingForm.logoUrl} alt={brandingForm.name || "Jobber logo"} className="admin-brand-image" />
-                  ) : (
-                    <div className="admin-empty-mini">No custom logo saved yet</div>
-                  )}
-                </div>
-                <div className="inline">
-                  <button type="submit" className="admin-hud-cta">Save Branding</button>
-                  <button type="button" onClick={() => setBrandingForm((form) => ({ ...form, logoUrl: "" }))}>Clear Logo</button>
-                </div>
-              </form>
+              <div className="space-y-4">
+                <form className="admin-form admin-hud-form" onSubmit={saveBranding}>
+                  <div className="admin-form-intro">
+                    <strong>Jobber Branding</strong>
+                    <span>Upload the logo that should replace the current mark in the top left corner for this jobber.</span>
+                  </div>
+                  <input
+                    value={brandingForm.name}
+                    onChange={(e) => setBrandingForm((form) => ({ ...form, name: e.target.value }))}
+                    placeholder="Jobber Name"
+                  />
+                  <label className="admin-file-field">
+                    <span>Logo Upload</span>
+                    <input type="file" accept="image/*" onChange={(e) => onLogoFileSelected(e.target.files?.[0])} />
+                  </label>
+                  <input
+                    value={brandingForm.logoUrl}
+                    onChange={(e) => setBrandingForm((form) => ({ ...form, logoUrl: e.target.value }))}
+                    placeholder="Logo URL or data URL"
+                  />
+                  <div className="admin-brand-preview">
+                    {brandingForm.logoUrl ? (
+                      <img src={brandingForm.logoUrl} alt={brandingForm.name || "Jobber logo"} className="admin-brand-image" />
+                    ) : (
+                      <div className="admin-empty-mini">No custom logo saved yet</div>
+                    )}
+                  </div>
+                  <div className="inline">
+                    <button type="submit" className="admin-hud-cta">Save Branding</button>
+                    <button type="button" onClick={() => setBrandingForm((form) => ({ ...form, logoUrl: "" }))}>Clear Logo</button>
+                  </div>
+                </form>
+
+                <form className="admin-form admin-hud-form" onSubmit={saveOpisCredentials}>
+                  <div className="admin-form-intro">
+                    <strong>OPIS Credentials</strong>
+                    <span>Save OPIS access for this jobber. Credentials are encrypted before they are stored in the database.</span>
+                  </div>
+                  <input
+                    value={opisCredentialsForm.username}
+                    onChange={(e) => setOpisCredentialsForm((form) => ({ ...form, username: e.target.value }))}
+                    placeholder="OPIS Username"
+                    autoComplete="off"
+                    required
+                  />
+                  <input
+                    type="password"
+                    value={opisCredentialsForm.password}
+                    onChange={(e) => setOpisCredentialsForm((form) => ({ ...form, password: e.target.value }))}
+                    placeholder="OPIS Password"
+                    autoComplete="new-password"
+                    required
+                  />
+                  <div className="admin-empty-mini">
+                    {opisCredentialsStatus?.configured
+                      ? `Configured${opisCredentialsStatus.updatedAt ? `, last updated ${new Date(opisCredentialsStatus.updatedAt).toLocaleString()}` : ""}.`
+                      : "No OPIS credentials have been saved for this jobber yet."}
+                  </div>
+                  <div className="inline">
+                    <button type="submit" className="admin-hud-cta">Save OPIS Credentials</button>
+                  </div>
+                </form>
+
+                <form className="admin-form admin-hud-form" onSubmit={saveEiaCredentials}>
+                  <div className="admin-form-intro">
+                    <strong>EIA API Key</strong>
+                    <span>Save the EIA API v2 key for this jobber. The key is encrypted before it is stored in the database.</span>
+                  </div>
+                  <input
+                    type="password"
+                    value={eiaCredentialsForm.apiKey}
+                    onChange={(e) => setEiaCredentialsForm({ apiKey: e.target.value })}
+                    placeholder="EIA API Key"
+                    autoComplete="new-password"
+                    required
+                  />
+                  <div className="admin-empty-mini">
+                    {eiaCredentialsStatus?.configured
+                      ? `Configured${eiaCredentialsStatus.updatedAt ? `, last updated ${new Date(eiaCredentialsStatus.updatedAt).toLocaleString()}` : ""}.`
+                      : "No EIA API key has been saved for this jobber yet."}
+                  </div>
+                  <div className="inline">
+                    <button type="submit" className="admin-hud-cta">Save EIA API Key</button>
+                  </div>
+                </form>
+              </div>
             )}
 
             {activePanel === "createStation" && (

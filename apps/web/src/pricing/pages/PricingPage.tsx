@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { api } from "../../api";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
   Legend,
   Line,
@@ -36,6 +35,87 @@ const PRICE_SERIES: Array<{ key: BenchmarkKey; label: string }> = [
 
 const TIMEFRAME_OPTIONS = ["7D", "30D", "90D", "1Y"] as const;
 
+type PricingFormulaId = "regular" | "premium" | "diesel";
+
+type PricingFormulaComponent = {
+  key: string;
+  label: string;
+  inputValue: number | null;
+  multiplier: number;
+  notes: string;
+  fallbackTo?: string;
+  marketDriven?: boolean;
+};
+
+type PricingFormulaTemplate = {
+  id: PricingFormulaId;
+  label: string;
+  totalLabel: string;
+  productMatcher: RegExp;
+  components: PricingFormulaComponent[];
+};
+
+type SitePricingConfig = {
+  pricingKey: string;
+  formulaId: string;
+  fuelType?: string;
+  productName: string;
+  marketLabel: string;
+  config: Record<string, { inputValue?: string; multiplier?: string }>;
+  updatedAt?: string;
+  updatedBy?: string;
+};
+
+const PRICING_FORMULA_TEMPLATES: PricingFormulaTemplate[] = [
+  {
+    id: "regular",
+    label: "Regular Formula",
+    totalLabel: "Regular Estimated Price",
+    productMatcher: /regular|reg|87|carbob/i,
+    components: [
+      { key: "carbob", label: "CARBOB Spot Price (USD/gal)", inputValue: 2.8781, multiplier: 0.9, notes: "Pulled from OPIS market table", marketDriven: true },
+      { key: "ethanol", label: "Ethanol Spot Price (USD/gal)", inputValue: 2.03, multiplier: 0.1, notes: "Pulled from OPIS market table when available", marketDriven: true },
+      { key: "rin", label: "RIN Price (USD/gal)", inputValue: 1.075, multiplier: -0.09, notes: "Pulled from OPIS market table when available", marketDriven: true },
+      { key: "terminal_adder", label: "Terminal Adder (USD/gal)", inputValue: 0.01, multiplier: 1, notes: "Editable adder" },
+      { key: "lcfs", label: "LCFS (USD/gal)", inputValue: 0.16785, multiplier: 1, notes: "Editable variable" },
+      { key: "ghg_term_c", label: "GHG - Term C (Preferred, USD/gal)", inputValue: 0.2211, multiplier: 1, notes: "Editable variable" },
+      { key: "ghg_term_d", label: "GHG - Term D (Fallback, USD/gal)", inputValue: null, multiplier: 1, notes: "Editable fallback if Term C is blank", fallbackTo: "ghg_term_c" }
+    ]
+  },
+  {
+    id: "premium",
+    label: "Premium Formula",
+    totalLabel: "Premium Estimated Price",
+    productMatcher: /premium|prem|91|93/i,
+    components: [
+      { key: "carbob", label: "CARBOB Spot Price (USD/gal)", inputValue: 3.0781, multiplier: 0.9, notes: "Pulled from OPIS market table", marketDriven: true },
+      { key: "ethanol", label: "Ethanol Spot Price (USD/gal)", inputValue: 2.03, multiplier: 0.1, notes: "Pulled from OPIS market table when available", marketDriven: true },
+      { key: "rin", label: "RIN Price (USD/gal)", inputValue: 1.075, multiplier: -0.09, notes: "Pulled from OPIS market table when available", marketDriven: true },
+      { key: "terminal_adder", label: "Terminal Adder (USD/gal)", inputValue: 0.01, multiplier: 1, notes: "Editable adder" },
+      { key: "lcfs", label: "LCFS (USD/gal)", inputValue: 0.16785, multiplier: 1, notes: "Editable variable" },
+      { key: "ghg_term_c", label: "GHG - Term C (Preferred, USD/gal)", inputValue: 0.2204, multiplier: 1, notes: "Editable variable" },
+      { key: "ghg_term_d", label: "GHG - Term D (Fallback, USD/gal)", inputValue: null, multiplier: 1, notes: "Editable fallback if Term C is blank", fallbackTo: "ghg_term_c" }
+    ]
+  },
+  {
+    id: "diesel",
+    label: "Diesel Formula",
+    totalLabel: "Diesel Estimated Price",
+    productMatcher: /diesel|dsl|ulsd|carb/i,
+    components: [
+      { key: "spot", label: "Spot Price (USD/gal)", inputValue: 2.7561, multiplier: 1, notes: "Pulled from OPIS market table", marketDriven: true },
+      { key: "ethanol", label: "Ethanol Spot Price (USD/gal)", inputValue: 2.03, multiplier: 0.1, notes: "Pulled from OPIS market table when available", marketDriven: true },
+      { key: "rin", label: "RIN Price (USD/gal)", inputValue: 1.075, multiplier: 0, notes: "Pulled from OPIS market table when available", marketDriven: true },
+      { key: "terminal_adder", label: "Terminal Adder (USD/gal)", inputValue: 0.012, multiplier: 1, notes: "Editable adder" },
+      { key: "lcfs", label: "LCFS (USD/gal)", inputValue: 0.16785, multiplier: 1, notes: "Editable variable" },
+      { key: "ghg_term_c", label: "GHG - Term C (Preferred, USD/gal)", inputValue: 0.2809, multiplier: 1, notes: "Editable variable" },
+      { key: "ghg_term_d", label: "GHG - Term D (Fallback, USD/gal)", inputValue: null, multiplier: 1, notes: "Editable fallback if Term C is blank", fallbackTo: "ghg_term_c" }
+    ]
+  }
+];
+
+const PRICING_FORMULA_TEMPLATE_BY_ID = new Map(PRICING_FORMULA_TEMPLATES.map((template) => [template.id, template]));
+
 function formatOpisPrice(value: number | null, unit = "USCPG") {
   if (value == null) return "n/a";
   return `${value.toFixed(2)} ${unit}`;
@@ -51,90 +131,19 @@ function formatOpisDateTime(value: string) {
   });
 }
 
-function OpisHighlightList({ title, rows }: { title: string; rows: OpisSummaryRow[] }) {
-  return (
-    <div className="rounded-2xl border border-energy-border bg-slate-50 p-4">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">{title}</div>
-      <div className="mt-3 space-y-3">
-        {rows.map((row) => (
-          <div key={`${title}-${row.cityId}-${row.productId}`} className="flex items-start justify-between gap-4 text-sm">
-            <div>
-              <div className="font-semibold text-energy-ink">{row.cityName}, {row.stateAbbr}</div>
-              <div className="text-energy-slate">{row.productName}</div>
-            </div>
-            <div className="text-right">
-              <div className="font-semibold text-energy-ink">{formatOpisPrice(row.price, row.currencyUnit)}</div>
-              <div className="text-xs text-energy-slate">{row.grossNet}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function averageOpisRows(rows: OpisSummaryRow[], fuelType?: string) {
   const filtered = fuelType ? rows.filter((row) => row.fuelType === fuelType) : rows;
   if (!filtered.length) return null;
   return filtered.reduce((sum, row) => sum + row.price, 0) / filtered.length;
 }
 
-function filterOpisRows(rows: OpisSummaryRow[], city: string, products: string[]) {
+function filterOpisRows(rows: OpisSummaryRow[], state: string, city: string) {
   return rows.filter((row) => {
+    const stateMatch = state === "ALL" || row.stateAbbr === state;
     const cityLabel = `${row.cityName}, ${row.stateAbbr}`;
     const cityMatch = city === "ALL" || cityLabel === city;
-    const productMatch = products.includes(row.productName);
-    return cityMatch && productMatch;
+    return stateMatch && cityMatch;
   });
-}
-
-function buildOpisCommentary(
-  rows: OpisSummaryRow[],
-  selectedCity: string,
-  selectedProducts: string[],
-  primaryTiming?: { label: string; averagePrice: number | null },
-  compareTiming?: { label: string; averagePrice: number | null }
-) {
-  if (!rows.length) {
-    return {
-      summary: ["No OPIS rows match the current city and product filters."],
-      outlook: ["Broaden the city or product selection to restore the comparison view."]
-    };
-  }
-
-  const sorted = [...rows].sort((a, b) => b.price - a.price);
-  const highest = sorted[0];
-  const lowest = sorted[sorted.length - 1];
-  const averagePrice = averageOpisRows(rows);
-  const gasolineAverage = averageOpisRows(rows, "Gasoline");
-  const dieselAverage = averageOpisRows(rows, "Distillate");
-  const spread = gasolineAverage != null && dieselAverage != null ? dieselAverage - gasolineAverage : null;
-  const timingDelta = primaryTiming?.averagePrice != null && compareTiming?.averagePrice != null
-    ? primaryTiming.averagePrice - compareTiming.averagePrice
-    : null;
-  const cityLabel = selectedCity === "ALL" ? "all returned cities" : selectedCity;
-
-  return {
-    summary: [
-      `The filtered OPIS table contains ${rows.length.toLocaleString("en-US")} rows across ${cityLabel} and ${selectedProducts.length.toLocaleString("en-US")} selected product filters.`,
-      `Average returned rack pricing is ${(averagePrice || 0).toFixed(2)} USCPG, with the current range running from ${lowest.cityName}, ${lowest.stateAbbr} at ${lowest.price.toFixed(2)} USCPG up to ${highest.cityName}, ${highest.stateAbbr} at ${highest.price.toFixed(2)} USCPG.`,
-      spread == null
-        ? "The current filter set does not include enough gasoline and diesel rows to show a fuel spread."
-        : spread > 0
-          ? `Diesel is averaging ${spread.toFixed(2)} USCPG above gasoline in the current OPIS filter set.`
-          : `Gasoline is averaging ${Math.abs(spread).toFixed(2)} USCPG above diesel in the current OPIS filter set.`
-    ],
-    outlook: [
-      timingDelta == null
-        ? "The selected timing pair does not have enough overlap to produce a clean comparison."
-        : timingDelta > 0
-          ? `${primaryTiming?.label} pricing is running ${timingDelta.toFixed(2)} USCPG above ${compareTiming?.label}, which points to a firmer prompt wholesale tone.`
-          : timingDelta < 0
-            ? `${primaryTiming?.label} pricing is running ${Math.abs(timingDelta).toFixed(2)} USCPG below ${compareTiming?.label}, which suggests the current rack tone is softer than the comparison timing.`
-            : `${primaryTiming?.label} and ${compareTiming?.label} are effectively flat versus each other in the current selection.`,
-      "Use the city selector to narrow the rack table to one market center, then tighten the product checkboxes to compare only the product slate you actually buy."
-    ]
-  };
 }
 
 function fuelCardTone(label: string) {
@@ -145,36 +154,32 @@ function fuelCardTone(label: string) {
   return "border-energy-border bg-white";
 }
 
-function fuelGroupTone(fuelType: string) {
-  if (/biodiesel/i.test(fuelType)) return "border-emerald-200 bg-emerald-50";
-  if (/distillate|diesel/i.test(fuelType)) return "border-rose-200 bg-rose-50";
-  if (/gasoline/i.test(fuelType)) return "border-amber-200 bg-amber-50";
-  return "border-slate-200 bg-slate-50";
+function formatOpisChange(value: number | null) {
+  if (value == null) return "n/a";
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)} USCPG`;
 }
 
-function OpisTooltip({
-  active,
-  payload,
-  label
-}: {
-  active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string }>;
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-2xl border border-energy-border bg-white p-3 shadow-energy">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-energy-slate">{label}</div>
-      <div className="space-y-1 text-sm">
-        {payload.map((item) => (
-          <div key={item.name} className="flex items-center justify-between gap-4">
-            <span className="font-medium" style={{ color: item.color }}>{item.name}</span>
-            <span className="text-energy-ink">{Number(item.value).toFixed(2)} USCPG</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function resolveFormulaId(productName: string): PricingFormulaId | null {
+  const match = PRICING_FORMULA_TEMPLATES.find((template) => template.productMatcher.test(productName));
+  return match?.id || null;
+}
+
+function formatCurrencyPerGallon(value: number | null) {
+  if (value == null || Number.isNaN(value)) return "n/a";
+  return `$${value.toFixed(4)}`;
+}
+
+function computeFormulaTotal(
+  components: Array<PricingFormulaComponent & { inputValue: number | null; multiplier: number }>
+) {
+  const componentMap = new Map(components.map((component) => [component.key, component]));
+  return components.reduce((sum, component) => {
+    if (component.fallbackTo) {
+      const primary = componentMap.get(component.fallbackTo);
+      if (primary?.inputValue != null) return sum;
+    }
+    return sum + ((component.inputValue ?? 0) * component.multiplier);
+  }, 0);
 }
 
 function ToggleGroup({
@@ -297,12 +302,12 @@ export function PricingPage() {
   const [opisData, setOpisData] = useState<OpisMarketSnapshot | null>(null);
   const [opisTiming, setOpisTiming] = useState("0");
   const [opisState, setOpisState] = useState("ALL");
-  const [pendingOpisCity, setPendingOpisCity] = useState("ALL");
-  const [appliedOpisCity, setAppliedOpisCity] = useState("ALL");
-  const [pendingOpisProducts, setPendingOpisProducts] = useState<string[]>([]);
-  const [appliedOpisProducts, setAppliedOpisProducts] = useState<string[]>([]);
-  const [primaryTiming, setPrimaryTiming] = useState("0");
-  const [compareTiming, setCompareTiming] = useState("1");
+  const [opisCity, setOpisCity] = useState("ALL");
+  const [pricingFormulaInputs, setPricingFormulaInputs] = useState<Record<string, { inputValue: string; multiplier: string }>>({});
+  const [selectedPricingRowKey, setSelectedPricingRowKey] = useState<string | null>(null);
+  const [currentJobber, setCurrentJobber] = useState<{ id: string; name: string; slug?: string } | null>(null);
+  const [jobberPricingConfigs, setJobberPricingConfigs] = useState<Record<string, SitePricingConfig>>({});
+  const [pricingSaveStatus, setPricingSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   async function load() {
     setStatus("loading");
@@ -334,98 +339,209 @@ export function PricingPage() {
     loadOpis();
   }, [activeView]);
 
-  const opisProductOptions = useMemo(() => {
-    if (!opisData) return [];
-    const grouped = new Map<string, { count: number; fuelType: string }>();
-    opisData.rows.forEach((row) => {
-      const current = grouped.get(row.productName);
-      grouped.set(row.productName, {
-        count: (current?.count || 0) + 1,
-        fuelType: current?.fuelType || row.fuelType
-      });
-    });
-    return [...grouped.entries()]
-      .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
-      .slice(0, 12)
-      .map(([value, meta]) => ({ value, label: value, count: meta.count, fuelType: meta.fuelType }));
-  }, [opisData]);
-
-  const opisProductGroups = useMemo(() => {
-    const grouped = new Map<string, Array<{ value: string; label: string; count: number; fuelType: string }>>();
-    opisProductOptions.forEach((option) => {
-      if (!grouped.has(option.fuelType)) grouped.set(option.fuelType, []);
-      grouped.get(option.fuelType)?.push(option);
-    });
-    return [...grouped.entries()];
-  }, [opisProductOptions]);
-
   useEffect(() => {
-    if (!opisProductOptions.length) return;
-    const allProducts = opisProductOptions.map((option) => option.value);
-    setPendingOpisProducts(allProducts);
-    setAppliedOpisProducts(allProducts);
-  }, [opisProductOptions]);
-
-  useEffect(() => {
-    if (primaryTiming === compareTiming) {
-      const fallback = (opisData?.filterOptions.timing || []).find((option) => option.value !== primaryTiming)?.value || primaryTiming;
-      setCompareTiming(fallback);
+    let cancelled = false;
+    async function loadJobberPricingConfigs() {
+      try {
+        const [jobber, configs] = await Promise.all([
+          api.getCurrentJobber(),
+          api.getJobberPricingConfigs()
+        ]);
+        if (cancelled) return;
+        setCurrentJobber(jobber);
+        const nextConfigs = Object.fromEntries(configs.map((item) => [item.pricingKey, item]));
+        setJobberPricingConfigs(nextConfigs);
+      } catch (_error) {
+        if (!cancelled) {
+          setCurrentJobber(null);
+          setJobberPricingConfigs({});
+        }
+      }
     }
-  }, [primaryTiming, compareTiming, opisData]);
+    setPricingFormulaInputs({});
+    setPricingSaveStatus("idle");
+    loadJobberPricingConfigs();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const opisCityOptions = useMemo(() => {
     if (!opisData) return [];
+    const stateScopedRows = opisData.rows.filter((row) => opisState === "ALL" || row.stateAbbr === opisState);
     return [
       { value: "ALL", label: "All Cities" },
-      ...[...new Map(opisData.rows.map((row) => [`${row.cityName}, ${row.stateAbbr}`, { value: `${row.cityName}, ${row.stateAbbr}`, label: `${row.cityName}, ${row.stateAbbr}` }])).values()]
+      ...[...new Map(stateScopedRows.map((row) => [`${row.cityName}, ${row.stateAbbr}`, { value: `${row.cityName}, ${row.stateAbbr}`, label: `${row.cityName}, ${row.stateAbbr}` }])).values()]
         .sort((a, b) => a.label.localeCompare(b.label))
     ];
-  }, [opisData]);
+  }, [opisData, opisState]);
+
+  useEffect(() => {
+    setOpisCity("ALL");
+  }, [opisState]);
 
   const filteredOpisRows = useMemo(() => {
     if (!opisData) return [];
-    return filterOpisRows(opisData.rows, appliedOpisCity, appliedOpisProducts);
-  }, [opisData, appliedOpisCity, appliedOpisProducts]);
+    return filterOpisRows(opisData.rows, opisState, opisCity);
+  }, [opisData, opisState, opisCity]);
 
-  const opisFilteredCommentary = useMemo(() => {
-    const timingRows = opisData?.charts.timingComparison || [];
-    const primary = timingRows.find((item) => item.timing === primaryTiming);
-    const compare = timingRows.find((item) => item.timing === compareTiming);
-    return buildOpisCommentary(filteredOpisRows, appliedOpisCity, appliedOpisProducts, primary, compare);
-  }, [filteredOpisRows, appliedOpisCity, appliedOpisProducts, opisData, primaryTiming, compareTiming]);
+  const opisComparisonSnapshot = useMemo(
+    () => opisData?.timingSnapshots.find((snapshot) => snapshot.timing !== opisData.appliedFilters.timing) || null,
+    [opisData]
+  );
 
-  const opisTimingChartData = useMemo(() => {
-    const primaryRows = filterOpisRows(
-      (opisData?.timingSnapshots.find((item) => item.timing === primaryTiming)?.rows || []),
-      appliedOpisCity,
-      appliedOpisProducts
-    );
-    const compareRows = filterOpisRows(
-      (opisData?.timingSnapshots.find((item) => item.timing === compareTiming)?.rows || []),
-      appliedOpisCity,
-      appliedOpisProducts
-    );
-    return [
-      {
-        category: "Overall Avg",
-        primary: averageOpisRows(primaryRows),
-        compare: averageOpisRows(compareRows)
-      },
-      {
-        category: "Gasoline Avg",
-        primary: averageOpisRows(primaryRows, "Gasoline"),
-        compare: averageOpisRows(compareRows, "Gasoline")
-      },
-      {
-        category: "Diesel Avg",
-        primary: averageOpisRows(primaryRows, "Distillate"),
-        compare: averageOpisRows(compareRows, "Distillate")
-      }
-    ];
-  }, [opisData, primaryTiming, compareTiming, appliedOpisCity, appliedOpisProducts]);
+  const opisTableRows = useMemo(() => {
+    if (!opisData) return [];
+    const comparisonRows = opisComparisonSnapshot
+      ? filterOpisRows(opisComparisonSnapshot.rows, opisState, opisCity)
+      : [];
+    const comparisonByProduct = new Map<string, OpisSummaryRow[]>();
+    comparisonRows.forEach((row) => {
+      const key = `${row.cityName}, ${row.stateAbbr}__${row.productName}`;
+      if (!comparisonByProduct.has(key)) comparisonByProduct.set(key, []);
+      comparisonByProduct.get(key)?.push(row);
+    });
 
-  const opisHighestRows = useMemo(() => [...filteredOpisRows].sort((a, b) => b.price - a.price).slice(0, 5), [filteredOpisRows]);
-  const opisLowestRows = useMemo(() => [...filteredOpisRows].sort((a, b) => a.price - b.price).slice(0, 5), [filteredOpisRows]);
+    const grouped = new Map<string, OpisSummaryRow[]>();
+    filteredOpisRows.forEach((row) => {
+      const key = `${row.cityName}, ${row.stateAbbr}__${row.productName}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)?.push(row);
+    });
+
+    return [...grouped.entries()]
+      .map(([groupKey, rows]) => {
+        const prices = rows.map((row) => row.price);
+        const averagePrice = averageOpisRows(rows);
+        const comparisonAverage = averageOpisRows(comparisonByProduct.get(groupKey) || []);
+        const sample = rows[0];
+        const productName = sample.productName;
+        const formulaId = resolveFormulaId(productName);
+        const pricingKey = `${sample.cityName}, ${sample.stateAbbr}__${formulaId || sample.fuelType}`;
+        const rowKey = `${sample.cityName}, ${sample.stateAbbr}__${productName}`;
+        return {
+          key: rowKey,
+          pricingKey,
+          productName,
+          fuelType: sample.fuelType,
+          marketLabel: `${sample.cityName}, ${sample.stateAbbr}`,
+          formulaId,
+          formulaLabel: formulaId ? (PRICING_FORMULA_TEMPLATE_BY_ID.get(formulaId)?.label || "Custom") : "Custom",
+          low: Math.min(...prices),
+          high: Math.max(...prices),
+          average: averagePrice,
+          change: averagePrice != null && comparisonAverage != null ? averagePrice - comparisonAverage : null,
+          estimatedPrice: null
+        };
+      })
+      .sort((a, b) => a.marketLabel.localeCompare(b.marketLabel) || a.productName.localeCompare(b.productName));
+  }, [opisData, opisComparisonSnapshot, filteredOpisRows, opisState, opisCity]);
+
+  const pricingCards = useMemo(() => {
+    return opisTableRows.flatMap((row) => {
+      if (!row.formulaId || row.average == null) return [];
+      const template = PRICING_FORMULA_TEMPLATE_BY_ID.get(row.formulaId);
+      if (!template) return [];
+      const marketSpot = row.average / 100;
+      const savedConfig = jobberPricingConfigs[row.pricingKey]?.config || {};
+      const components = template.components.map((component) => {
+        const stateKey = `${row.key}:${component.key}`;
+        const override = pricingFormulaInputs[stateKey] || savedConfig[component.key] || {};
+        const rawInput = component.marketDriven ? marketSpot : (override?.inputValue ?? component.inputValue ?? "");
+        const inputValue = rawInput === "" || rawInput == null ? null : Number(rawInput);
+        const multiplier = Number(override?.multiplier ?? component.multiplier);
+        return {
+          ...component,
+          inputValue: Number.isFinite(inputValue) ? inputValue : null,
+          multiplier: Number.isFinite(multiplier) ? multiplier : component.multiplier,
+          stateKey
+        };
+      });
+
+      return [{
+        ...row,
+        totalLabel: template.totalLabel,
+        components,
+        marketSpot,
+        estimatedPrice: computeFormulaTotal(components)
+      }];
+    });
+  }, [opisTableRows, pricingFormulaInputs, jobberPricingConfigs]);
+
+  const pricingCardByRowKey = useMemo(
+    () => new Map(pricingCards.map((card) => [card.key, card])),
+    [pricingCards]
+  );
+
+  const opisDisplayRows = useMemo(
+    () => opisTableRows.map((row) => ({
+      ...row,
+      estimatedPrice: pricingCardByRowKey.get(row.key)?.estimatedPrice ?? row.estimatedPrice
+    })),
+    [opisTableRows, pricingCardByRowKey]
+  );
+
+  useEffect(() => {
+    if (!pricingCards.length) {
+      setSelectedPricingRowKey(null);
+      return;
+    }
+    if (!selectedPricingRowKey || !pricingCardByRowKey.has(selectedPricingRowKey)) {
+      setSelectedPricingRowKey(pricingCards[0].key);
+    }
+  }, [pricingCards, pricingCardByRowKey, selectedPricingRowKey]);
+
+  const selectedPricingCard = selectedPricingRowKey ? pricingCardByRowKey.get(selectedPricingRowKey) ?? null : null;
+  const selectedSavedConfig = selectedPricingCard ? jobberPricingConfigs[selectedPricingCard.pricingKey]?.config || {} : {};
+  const selectedPricingDirty = !!selectedPricingCard && selectedPricingCard.components.some((component) => {
+    const saved = selectedSavedConfig[component.key] || {};
+    const defaultInput = component.inputValue == null ? "" : String(component.inputValue);
+    const defaultMultiplier = String(component.multiplier);
+    const current = pricingFormulaInputs[component.stateKey];
+    if (!current) return false;
+    const baselineInput = saved.inputValue ?? (component.marketDriven ? defaultInput : (component.inputValue == null ? "" : String(PRICING_FORMULA_TEMPLATE_BY_ID.get(selectedPricingCard.formulaId)?.components.find((item) => item.key === component.key)?.inputValue ?? "")));
+    const baselineMultiplier = saved.multiplier ?? defaultMultiplier;
+    return current.inputValue !== baselineInput || current.multiplier !== baselineMultiplier;
+  });
+
+  async function saveSelectedPricingCard() {
+    if (!selectedPricingCard) return;
+    setPricingSaveStatus("saving");
+    try {
+      const config = Object.fromEntries(selectedPricingCard.components.map((component) => {
+        const current = pricingFormulaInputs[component.stateKey];
+        return [
+          component.key,
+          {
+            inputValue: component.marketDriven ? (component.inputValue == null ? "" : String(component.inputValue)) : (current?.inputValue ?? (component.inputValue == null ? "" : String(component.inputValue))),
+            multiplier: current?.multiplier ?? String(component.multiplier)
+          }
+        ];
+      }));
+      const saved = await api.saveJobberPricingConfig({
+        pricingKey: selectedPricingCard.pricingKey,
+        formulaId: selectedPricingCard.formulaId,
+        fuelType: selectedPricingCard.fuelType,
+        productName: selectedPricingCard.productName,
+        marketLabel: selectedPricingCard.marketLabel,
+        config
+      });
+      setJobberPricingConfigs((current) => ({
+        ...current,
+        [saved.pricingKey]: saved
+      }));
+      setPricingFormulaInputs((current) => {
+        const next = { ...current };
+        selectedPricingCard.components.forEach((component) => {
+          delete next[component.stateKey];
+        });
+        return next;
+      });
+      setPricingSaveStatus("saved");
+    } catch (_error) {
+      setPricingSaveStatus("error");
+    }
+  }
 
   const filteredHistory = useMemo(() => (data ? filterPriceHistory(data.priceHistory, timeframe) : []), [data, timeframe]);
   const inventorySeries = useMemo(() => (data ? buildInventoryModeSeries(data.inventorySeries, inventoryMode) : []), [data, inventoryMode]);
@@ -673,126 +789,49 @@ export function PricingPage() {
         ) : (
           <section className="space-y-6">
             <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
-              <div className="grid gap-4 lg:grid-cols-3">
-                <label className="block">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">Timing</div>
-                  <select
-                    value={opisTiming}
-                    onChange={(event) => setOpisTiming(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
-                  >
-                    {(opisData?.filterOptions.timing || []).map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">State</div>
-                  <select
-                    value={opisState}
-                    onChange={(event) => setOpisState(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
-                  >
-                    {(opisData?.filterOptions.states || []).map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">City</div>
-                  <select
-                    value={pendingOpisCity}
-                    onChange={(event) => setPendingOpisCity(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
-                  >
-                    {opisCityOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="mt-5 rounded-2xl border border-energy-border bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">Products</div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPendingOpisProducts(opisProductOptions.map((option) => option.value))}
-                      className="rounded-full border border-energy-border bg-white px-3 py-1 text-xs font-semibold text-energy-ink"
-                    >
-                      Select all
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPendingOpisProducts([])}
-                      className="rounded-full border border-energy-border bg-white px-3 py-1 text-xs font-semibold text-energy-ink"
-                    >
-                      Clear all
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-3 space-y-4">
-                  {opisProductGroups.map(([fuelType, options]) => (
-                    <div key={fuelType} className={`rounded-2xl border p-4 ${fuelGroupTone(fuelType)}`}>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">{fuelType}</div>
-                      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                        {options.map((option) => {
-                          const checked = pendingOpisProducts.includes(option.value);
-                          return (
-                            <label key={option.value} className="flex items-start gap-3 rounded-2xl border border-white/70 bg-white/90 px-3 py-3 text-sm text-energy-ink">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => {
-                                  setPendingOpisProducts((current) => (
-                                    current.includes(option.value)
-                                      ? current.filter((item) => item !== option.value)
-                                      : [...current, option.value]
-                                  ));
-                                }}
-                                className="mt-1 h-4 w-4 rounded border-energy-border text-energy-blue"
-                              />
-                              <span>
-                                <span className="block font-medium">{option.label}</span>
-                                <span className="block text-xs text-energy-slate">{option.count} returned rows</span>
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="mt-5 rounded-2xl border-2 border-slate-900 bg-white p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="text-sm font-medium text-energy-ink">
-                    Apply the selected timing, state, city, and product filters to all OPIS data below.
+              <div className="rounded-3xl border border-energy-border bg-slate-50 p-5">
+                <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-energy-slate">OPIS Market Monitor</div>
+                    <h3 className="mt-2 text-2xl font-semibold text-energy-ink">Build a city market view</h3>
+                    <p className="mt-2 max-w-2xl text-sm leading-6 text-energy-slate">
+                      Choose the state and city, then refresh the rack feed to rebuild the wholesale product table below.
+                    </p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setAppliedOpisCity(pendingOpisCity);
-                      setAppliedOpisProducts([...pendingOpisProducts]);
-                      loadOpis({ timing: opisTiming, state: opisState, fuelType: "all" });
-                    }}
-                    style={{
-                      minHeight: "56px",
-                      minWidth: "240px",
-                      backgroundColor: "#111827",
-                      color: "#ffffff",
-                      border: "2px solid #111827",
-                      borderRadius: "18px",
-                      fontSize: "15px",
-                      fontWeight: 700,
-                      padding: "0 24px",
-                      cursor: "pointer",
-                      position: "relative",
-                      zIndex: 40
-                    }}
+                    onClick={() => loadOpis({ timing: opisTiming, state: opisState, fuelType: "all" })}
+                    className="rounded-full border border-energy-border bg-white px-5 py-3 text-sm font-semibold text-energy-ink transition hover:border-energy-blue hover:text-energy-blue disabled:cursor-wait disabled:opacity-70"
+                    disabled={opisStatus === "loading"}
                   >
-                    {opisStatus === "loading" ? "Refreshing..." : "Apply Filters"}
+                    {opisStatus === "loading" ? "Refreshing..." : "Refresh"}
                   </button>
+                </div>
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <label className="block">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">State</div>
+                    <select
+                      value={opisState}
+                      onChange={(event) => setOpisState(event.target.value)}
+                      className="mt-2 w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
+                    >
+                      {(opisData?.filterOptions.states || []).map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-energy-slate">City</div>
+                    <select
+                      value={opisCity}
+                      onChange={(event) => setOpisCity(event.target.value)}
+                      className="mt-2 w-full rounded-2xl border border-energy-border bg-white px-4 py-3 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
+                    >
+                      {opisCityOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
               </div>
               <div className="mt-4 text-sm text-energy-slate">
@@ -811,146 +850,212 @@ export function PricingPage() {
               <section className="rounded-3xl border border-rose-200 bg-white p-10 text-center shadow-energy">
                 <div className="text-lg font-semibold text-energy-ink">OPIS data is unavailable.</div>
                 <p className="mt-2 text-sm text-energy-slate">
-                  Check that the API was started with `OPIS_USERNAME` and `OPIS_PASSWORD`, then try again.
+                  Save OPIS credentials for the current jobber in Admin, or start the API with `OPIS_USERNAME` and `OPIS_PASSWORD`, then try again.
                 </p>
               </section>
             ) : null}
 
             {opisData ? (
               <>
-                <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  {[
-                    { label: "Returned Rows", value: opisData.metrics.rowCount.toLocaleString("en-US"), detail: `${opisData.metrics.stateCount} states / ${opisData.metrics.cityCount} cities` },
-                    { label: "Average Price", value: formatOpisPrice(opisData.metrics.averagePrice), detail: opisData.metrics.effectiveDate ? formatDateLabel(opisData.metrics.effectiveDate.slice(0, 10)) : "n/a" },
-                    { label: "Gasoline Avg", value: formatOpisPrice(opisData.metrics.gasolineAverage), detail: "Selected OPIS market set" },
-                    { label: "Diesel Avg", value: formatOpisPrice(opisData.metrics.dieselAverage), detail: `${opisData.coverage.products} subscribed products` }
-                  ].map((item) => (
-                    <article key={item.label} className="rounded-3xl border border-energy-border bg-white p-5 shadow-energy">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">{item.label}</div>
-                      <div className="mt-3 text-3xl font-semibold text-energy-ink">{item.value}</div>
-                      <div className="mt-2 text-sm text-energy-slate">{item.detail}</div>
-                    </article>
-                  ))}
+                <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
+                <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">Market Fuel And Prices</div>
+                    <h3 className="mt-2 text-xl font-semibold text-energy-ink">
+                      {opisCity === "ALL" ? (opisState === "ALL" ? "All returned markets" : `All cities in ${opisState}`) : opisCity}
+                    </h3>
+                    <p className="mt-2 text-sm text-energy-slate">
+                      Products are grouped into a market table with low, high, average, and change versus{" "}
+                      <span className="font-medium text-energy-ink">
+                        {opisComparisonSnapshot?.label || "the comparison timing"}
+                      </span>.
+                    </p>
+                  </div>
+                  <div className="text-sm text-energy-slate">
+                    Current timing: <span className="font-medium text-energy-ink">{(opisData.filterOptions.timing || []).find((option) => option.value === opisData.appliedFilters.timing)?.label || opisData.appliedFilters.timing}</span>
+                  </div>
+                </div>
+                {opisDisplayRows.length ? (
+                  <div className="mt-6 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-energy-border text-left text-[11px] uppercase tracking-[0.14em] text-energy-slate">
+                          <th className="pb-3 pr-4">Market Fuel</th>
+                          <th className="pb-3 pr-4">Market</th>
+                          <th className="pb-3 pr-4">Formula</th>
+                          <th className="pb-3 pr-4">Low</th>
+                          <th className="pb-3 pr-4">High</th>
+                          <th className="pb-3 pr-4">Avg</th>
+                          <th className="pb-3 pr-4">Spot USD/gal</th>
+                          <th className="pb-3 pr-4">Change</th>
+                          <th className="pb-3">Est. Price</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {opisDisplayRows.map((row) => (
+                          <tr key={`${row.marketLabel}-${row.productName}`} className="border-b border-slate-100 align-top">
+                            <td className="py-4 pr-4">
+                              <div className="font-semibold text-energy-ink">{row.productName}</div>
+                              <div className="text-energy-slate">{row.fuelType}</div>
+                            </td>
+                            <td className="py-4 pr-4 text-energy-slate">{row.marketLabel}</td>
+                            <td className="py-4 pr-4 text-energy-slate">{row.formulaLabel}</td>
+                            <td className="py-4 pr-4 font-medium text-energy-ink">{formatOpisPrice(row.low)}</td>
+                            <td className="py-4 pr-4 font-medium text-energy-ink">{formatOpisPrice(row.high)}</td>
+                            <td className="py-4 pr-4 font-semibold text-energy-ink">{formatOpisPrice(row.average)}</td>
+                            <td className="py-4 pr-4 font-semibold text-energy-ink">{formatCurrencyPerGallon(row.average != null ? row.average / 100 : null)}</td>
+                            <td className={`py-4 pr-4 font-semibold ${row.change == null ? "text-energy-slate" : row.change >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                              {formatOpisChange(row.change)}
+                            </td>
+                            <td className="py-4 font-semibold text-energy-ink">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPricingRowKey(row.key)}
+                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${
+                                  selectedPricingRowKey === row.key
+                                    ? "bg-indigo-100 text-indigo-700"
+                                    : "border border-energy-border bg-white text-energy-ink hover:border-energy-blue hover:text-energy-blue"
+                                }`}
+                              >
+                                {formatCurrencyPerGallon(row.estimatedPrice)}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="mt-6 rounded-2xl border border-dashed border-energy-border bg-slate-50 p-8 text-center text-sm text-energy-slate">
+                    No OPIS market rows matched the current state and city selection.
+                  </div>
+                )}
                 </section>
 
-                <section className="grid gap-6">
-                  <ChartPanel
-                    title="Timing Comparison"
-                    description="Selected timing averages for the current city and product filter."
-                    actions={
-                    <div className="flex flex-wrap gap-3">
-                        <select
-                          value={primaryTiming}
-                          onChange={(event) => setPrimaryTiming(event.target.value)}
-                          className="rounded-2xl border border-energy-border bg-white px-4 py-2 text-sm font-semibold text-energy-ink outline-none"
-                        >
-                          {(opisData.filterOptions.timing || []).map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
-                        <select
-                          value={compareTiming}
-                          onChange={(event) => setCompareTiming(event.target.value)}
-                          className="rounded-2xl border border-energy-border bg-white px-4 py-2 text-sm font-semibold text-energy-ink outline-none"
-                        >
-                          {(opisData.filterOptions.timing || []).filter((option) => option.value !== primaryTiming).map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
+                <section className="rounded-3xl border border-energy-border bg-white p-5 shadow-energy">
+                {selectedPricingCard ? (
+                  <div className="min-w-0">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="space-y-2">
+                        <div className="text-base font-semibold text-energy-ink">{selectedPricingCard.productName}</div>
+                        <div className="text-sm text-energy-slate">{selectedPricingCard.marketLabel}</div>
+                        <div className="text-sm text-energy-slate">
+                          Market conversion: <span className="font-medium text-energy-ink">{`${(selectedPricingCard.marketSpot * 100).toFixed(2)} USCPG / 100 = ${formatCurrencyPerGallon(selectedPricingCard.marketSpot)}`}</span>
+                        </div>
+                        <div className="text-sm text-energy-slate">
+                          Saving for: <span className="font-medium text-energy-ink">{currentJobber?.name || "Current jobber"}</span>
+                        </div>
                       </div>
-                    }
-                    bodyClassName="min-h-[380px] w-full overflow-hidden"
-                    titlePopover={
-                      <div className="space-y-3">
-                        {opisFilteredCommentary.summary.map((line) => <p key={line}>{line}</p>)}
+                      <div className="text-right">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">{selectedPricingCard.totalLabel}</div>
+                        <div className="mt-2 text-2xl font-semibold text-energy-ink">{formatCurrencyPerGallon(selectedPricingCard.estimatedPrice)}</div>
+                        <div className={`mt-2 text-sm ${pricingSaveStatus === "error" ? "text-rose-600" : "text-energy-slate"}`}>
+                          {pricingSaveStatus === "saved" ? "Saved for current jobber." : pricingSaveStatus === "error" ? "Save failed." : selectedPricingDirty ? "Unsaved changes." : "Saved values loaded."}
+                        </div>
                       </div>
-                    }
-                  >
-                    <ResponsiveContainer width="100%" height={320}>
-                      <BarChart data={opisTimingChartData} margin={{ top: 12, right: 20, left: 20, bottom: 4 }} barGap={18}>
-                        <CartesianGrid stroke="#e6edf3" strokeDasharray="3 3" />
-                        <XAxis dataKey="category" tick={{ fontSize: 12, fill: "#5f7389" }} />
-                        <YAxis tick={{ fontSize: 12, fill: "#5f7389" }} width={70} />
-                        <Tooltip content={<OpisTooltip />} />
-                        <Legend />
-                        <Bar dataKey="primary" name={(opisData.filterOptions.timing || []).find((option) => option.value === primaryTiming)?.label || primaryTiming} fill="#275df5" radius={[8, 8, 0, 0]} />
-                        <Bar dataKey="compare" name={(opisData.filterOptions.timing || []).find((option) => option.value === compareTiming)?.label || compareTiming} fill="#0f8d8d" radius={[8, 8, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </ChartPanel>
-                </section>
-
-                <section className="grid gap-6">
-                  <div className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">Rack Summary</div>
-                      <h3 className="mt-2 text-xl font-semibold text-energy-ink">Live wholesale rack price table</h3>
                     </div>
                     <div className="mt-4 overflow-x-auto">
                       <table className="min-w-full text-sm">
                         <thead>
                           <tr className="border-b border-energy-border text-left text-[11px] uppercase tracking-[0.14em] text-energy-slate">
-                            <th className="pb-3 pr-4">Market</th>
-                            <th className="pb-3 pr-4">Product</th>
-                            <th className="pb-3 pr-4">Fuel</th>
-                            <th className="pb-3 pr-4">Price</th>
-                            <th className="pb-3 pr-4">Type</th>
-                            <th className="pb-3 pr-4">Timing</th>
-                            <th className="pb-3">Effective</th>
+                            <th className="pb-3 pr-4">Component</th>
+                            <th className="pb-3 pr-4">Input</th>
+                            <th className="pb-3 pr-4">Multiplier</th>
+                            <th className="pb-3 pr-4">Value</th>
+                            <th className="pb-3">Notes</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredOpisRows.map((row) => (
-                            <tr key={`${row.cityId}-${row.productId}-${row.branded}-${row.grossNet}`} className="border-b border-slate-100 align-top">
-                              <td className="py-3 pr-4">
-                                <div className="font-semibold text-energy-ink">{row.cityName}, {row.stateAbbr}</div>
-                                <div className="text-energy-slate">{row.countryName}</div>
-                              </td>
-                              <td className="py-3 pr-4 text-energy-ink">{row.productName}</td>
-                              <td className="py-3 pr-4 text-energy-slate">{row.fuelType}</td>
-                              <td className="py-3 pr-4 font-semibold text-energy-ink">{formatOpisPrice(row.price, row.currencyUnit)}</td>
-                              <td className="py-3 pr-4 text-energy-slate">{row.grossNet} / {row.branded}</td>
-                              <td className="py-3 pr-4 text-energy-slate">{row.benchmarkTimingType}</td>
-                              <td className="py-3 text-energy-slate">{formatDateLabel(row.effectiveDate.slice(0, 10))}</td>
-                            </tr>
-                          ))}
+                          {selectedPricingCard.components.map((component) => {
+                            const componentKey = component.stateKey;
+                            const primaryComponent = component.fallbackTo
+                              ? selectedPricingCard.components.find((item) => item.key === component.fallbackTo)
+                              : null;
+                            const contribution = component.fallbackTo && primaryComponent?.inputValue != null
+                              ? null
+                              : (component.inputValue ?? 0) * component.multiplier;
+                            const savedComponentConfig = selectedSavedConfig[component.key] || {};
+                            const inputFieldValue = pricingFormulaInputs[componentKey]?.inputValue
+                              ?? savedComponentConfig.inputValue
+                              ?? (component.inputValue == null ? "" : String(component.inputValue));
+                            const multiplierFieldValue = pricingFormulaInputs[componentKey]?.multiplier
+                              ?? savedComponentConfig.multiplier
+                              ?? String(component.multiplier);
+                            return (
+                              <tr key={componentKey} className="border-b border-slate-100 align-top">
+                                <td className="py-3 pr-4">
+                                  <div className="font-medium text-energy-ink">{component.label}</div>
+                                </td>
+                                <td className="py-3 pr-4">
+                                  {component.marketDriven ? (
+                                    <div className="w-28 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-energy-ink">
+                                      {formatCurrencyPerGallon(component.inputValue)}
+                                    </div>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      step="0.0001"
+                                      value={inputFieldValue}
+                                      onChange={(event) => {
+                                        const nextValue = event.target.value;
+                                        setPricingSaveStatus("idle");
+                                        setPricingFormulaInputs((current) => ({
+                                          ...current,
+                                          [componentKey]: {
+                                            inputValue: nextValue,
+                                            multiplier: current[componentKey]?.multiplier ?? String(component.multiplier)
+                                          }
+                                        }));
+                                      }}
+                                      className="w-28 rounded-xl border border-energy-border bg-white px-3 py-2 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
+                                    />
+                                  )}
+                                </td>
+                                <td className="py-3 pr-4">
+                                  <input
+                                    type="number"
+                                    step="0.0001"
+                                    value={multiplierFieldValue}
+                                    onChange={(event) => {
+                                      const nextValue = event.target.value;
+                                      setPricingSaveStatus("idle");
+                                      setPricingFormulaInputs((current) => ({
+                                        ...current,
+                                        [componentKey]: {
+                                          inputValue: current[componentKey]?.inputValue ?? (component.inputValue == null ? "" : String(component.inputValue)),
+                                          multiplier: nextValue
+                                        }
+                                      }));
+                                    }}
+                                    className="w-24 rounded-xl border border-energy-border bg-white px-3 py-2 text-sm font-semibold text-energy-ink outline-none transition focus:border-energy-blue"
+                                  />
+                                </td>
+                                <td className="py-3 pr-4 font-semibold text-energy-ink">
+                                  {contribution == null ? "Using Term C" : formatCurrencyPerGallon(contribution)}
+                                </td>
+                                <td className="py-3 text-energy-slate">{component.notes}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
+                    <div className="mt-6 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={saveSelectedPricingCard}
+                        disabled={pricingSaveStatus === "saving"}
+                        className="rounded-2xl border border-slate-900 bg-gradient-to-b from-white via-slate-100 to-slate-300 px-6 py-3 text-sm font-semibold text-slate-950 shadow-[0_6px_0_rgba(15,23,42,0.35)] transition active:translate-y-[2px] active:shadow-[0_3px_0_rgba(15,23,42,0.35)] disabled:cursor-wait disabled:opacity-70"
+                      >
+                        {pricingSaveStatus === "saving" ? "Saving..." : "Save"}
+                      </button>
+                    </div>
                   </div>
-
-                  <div className="grid gap-6 xl:grid-cols-2">
-                    <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">What This Feed Covers</div>
-                      <div className="mt-4 space-y-3 text-sm leading-6 text-energy-ink">
-                        {opisData.notes.map((note) => (
-                          <div key={note} className="flex gap-3">
-                            <span className="mt-2 h-2 w-2 rounded-full bg-energy-blue" />
-                            <span>{note}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                    <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">OPIS Commentary</div>
-                      <div className="mt-4 space-y-3 text-sm leading-6 text-energy-ink">
-                        {opisFilteredCommentary.summary.map((line) => (
-                          <div key={line} className="flex gap-3">
-                            <span className="mt-2 h-2 w-2 rounded-full bg-energy-blue" />
-                            <span>{line}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                    <section className="rounded-3xl border border-energy-border bg-white p-6 shadow-energy">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-energy-slate">Market Read</div>
-                      <div className="mt-4 space-y-3 text-sm leading-6 text-energy-ink">
-                        {opisFilteredCommentary.outlook.map((line) => <p key={line}>{line}</p>)}
-                      </div>
-                    </section>
-                    <OpisHighlightList title="Lowest Returned Markets" rows={opisLowestRows} />
-                    <OpisHighlightList title="Highest Returned Markets" rows={opisHighestRows} />
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-energy-border bg-slate-50 p-8 text-center text-sm text-energy-slate">
+                    Click an estimated price in the market table to open its editable pricing breakdown.
                   </div>
+                )}
                 </section>
               </>
             ) : null}

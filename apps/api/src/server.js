@@ -6,6 +6,7 @@ const { requireAuth, requireSiteAccess, requireRole } = require("./rbac");
 const { registerClient, sendEvent, broadcast } = require("./events");
 const { query, initDb, hasDbConfig } = require("./db");
 const { seedIfEmpty } = require("./seed");
+const { encryptJson, decryptJson } = require("./secrets");
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -19,14 +20,14 @@ function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
-const EIA_LEAFHANDLER_URLS = {
-  wti: "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=D&n=PET&s=RWTC",
-  brent: "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=D&n=PET&s=RBRTE",
-  gasoline: "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=W&n=PET&s=EMM_EPM0_PTE_NUS_DPG",
-  diesel: "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=W&n=PET&s=EMD_EPD2D_PTE_NUS_DPG",
-  crudeStocks: "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=W&n=PET&s=WCESTUS1",
-  gasolineStocks: "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=W&n=PET&s=WGTSTUS1",
-  distillateStocks: "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=W&n=PET&s=WDISTUS1"
+const EIA_API_BASE_URL = "https://api.eia.gov/v2/seriesid";
+const EIA_SERIES_IDS = {
+  wti: "PET.RWTC.D",
+  brent: "PET.RBRTE.D",
+  gasoline: "PET.EMM_EPM0_PTE_NUS_DPG.W",
+  crudeStocks: "PET.WCESTUS1.W",
+  gasolineStocks: "PET.WGTSTUS1.W",
+  distillateStocks: "PET.WDISTUS1.W"
 };
 
 const EIA_RETAIL_REGIONS = [
@@ -57,107 +58,89 @@ let opisMetadataCache = {
   value: null
 };
 
-const MONTHS = {
-  Jan: 0,
-  Feb: 1,
-  Mar: 2,
-  Apr: 3,
-  May: 4,
-  Jun: 5,
-  Jul: 6,
-  Aug: 7,
-  Sep: 8,
-  Oct: 9,
-  Nov: 10,
-  Dec: 11
-};
-
-function normalizeHtml(value) {
-  return String(value || "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function formatIsoDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function parseLeafRows(html) {
-  const rows = [];
-  const regex = /<tr>\s*<td class='B6'>([\s\S]*?)<\/td>([\s\S]*?)<\/tr>/gi;
-  let match;
-  while ((match = regex.exec(html)) !== null) {
-    rows.push({
-      label: normalizeHtml(match[1]).replace(/^\s+/, ""),
-      cells: [...match[2].matchAll(/<td class='B[35]'>([\s\S]*?)<\/td>/gi)].map((cell) => normalizeHtml(cell[1]))
-    });
+function normalizeEiaApiKey(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "";
+  const candidates = raw.match(/[A-Za-z0-9]{24,}/g) || [];
+  if (!candidates.length) return raw;
+  return candidates[candidates.length - 1];
+}
+
+async function eiaApiKey(user) {
+  const envApiKey = normalizeEiaApiKey(process.env.EIA_API_KEY || "");
+  if (envApiKey) {
+    return envApiKey;
   }
-  return rows;
+  if (!user?.jobberId) {
+    return "";
+  }
+
+  const result = await query(
+    `SELECT encrypted_json AS "encryptedJson"
+     FROM jobber_secrets
+     WHERE jobber_id=$1 AND provider='eia'
+     LIMIT 1`,
+    [user.jobberId]
+  );
+  if (result.rowCount === 0) {
+    return "";
+  }
+  const decrypted = decryptJson(result.rows[0].encryptedJson || {});
+  return normalizeEiaApiKey(decrypted.apiKey || "");
 }
 
-function parseDailyLeafPage(html) {
-  return parseLeafRows(html).flatMap((row) => {
-    const labelMatch = row.label.match(/^(\d{4})\s+([A-Za-z]{3})-\s*(\d{1,2})\s+to\s+([A-Za-z]{3})-\s*(\d{1,2})$/);
-    if (!labelMatch) return [];
-
-    const startYear = Number(labelMatch[1]);
-    const startMonth = MONTHS[labelMatch[2]];
-    const endMonth = MONTHS[labelMatch[4]];
-    const startDay = Number(labelMatch[3]);
-    const endDay = Number(labelMatch[5]);
-    const endYear = endMonth < startMonth ? startYear + 1 : startYear;
-    const startDate = new Date(Date.UTC(startYear, startMonth, startDay));
-    const endDate = new Date(Date.UTC(endYear, endMonth, endDay));
-    const points = [];
-
-    for (let i = 0; i < row.cells.length; i += 1) {
-      const value = row.cells[i];
-      const pointDate = new Date(startDate);
-      pointDate.setUTCDate(startDate.getUTCDate() + i);
-      if (pointDate > endDate || !value) continue;
-      points.push({
-        date: formatIsoDate(pointDate),
-        value: Number(String(value).replace(/,/g, ""))
-      });
-    }
-    return points;
-  });
+async function hasEiaApiKey(user) {
+  return Boolean(await eiaApiKey(user));
 }
 
-function parseWeeklyLeafPage(html) {
-  return parseLeafRows(html).flatMap((row) => {
-    const labelMatch = row.label.match(/^(\d{4})-([A-Za-z]{3})$/);
-    if (!labelMatch) return [];
-    const year = Number(labelMatch[1]);
-
-    const points = [];
-    for (let i = 0; i < row.cells.length; i += 2) {
-      const dateText = row.cells[i];
-      const valueText = row.cells[i + 1];
-      if (!dateText || !valueText) continue;
-      const dateMatch = dateText.match(/^(\d{2})\/(\d{2})$/);
-      if (!dateMatch) continue;
-      points.push({
-        date: formatIsoDate(new Date(Date.UTC(year, Number(dateMatch[1]) - 1, Number(dateMatch[2])))),
-        value: Number(String(valueText).replace(/,/g, ""))
-      });
-    }
-    return points;
-  });
+function normalizeEiaPeriod(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}$/.test(raw)) return `${raw}-01`;
+  if (/^\d{4}$/.test(raw)) return `${raw}-01-01`;
+  return raw.slice(0, 10);
 }
 
-async function fetchLeafSeries(url, parser) {
+async function fetchEiaSeries(seriesId, length = 400, user = null) {
+  const apiKey = await eiaApiKey(user);
+  if (!apiKey) {
+    throw new Error("EIA_API_KEY is missing.");
+  }
+
+  const url = new URL(`${EIA_API_BASE_URL}/${encodeURIComponent(seriesId)}`);
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("out", "json");
+  url.searchParams.set("length", String(length));
+  url.searchParams.set("sort[0][column]", "period");
+  url.searchParams.set("sort[0][direction]", "desc");
+
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "PetroleumDashboard/1.0"
+      "User-Agent": "PetroleumDashboard/1.0",
+      accept: "application/json"
     }
   });
   if (!response.ok) {
-    throw new Error(`EIA request failed (${response.status}) for ${url}`);
+    throw new Error(`EIA request failed (${response.status}) for ${url.toString()}`);
   }
-  const html = await response.text();
-  return parser(html);
+  const payload = await response.json();
+  const rows = payload?.response?.data || payload?.data || [];
+  return rows
+    .map((row) => {
+      const numericValue = Number(String(row.value ?? row.price ?? row.quantity ?? "").replace(/,/g, ""));
+      if (!Number.isFinite(numericValue)) return null;
+      return {
+        date: normalizeEiaPeriod(row.period),
+        value: numericValue
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 function latestPoints(points, limit) {
@@ -196,14 +179,14 @@ function inventorySeriesFromPoints({ key, label, points }) {
   };
 }
 
-function retailSeriesUrl(code, regionKey) {
-  return `https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=W&n=PET&s=${code}_${regionKey}_DPG`;
+function retailSeriesId(code, regionKey) {
+  return `PET.${code}_${regionKey}_DPG.W`;
 }
 
-async function regionalRetailSnapshot({ key, label, code }) {
+async function regionalRetailSnapshot({ key, label, code, user = null }) {
   const regionSeries = await Promise.all(
     EIA_RETAIL_REGIONS.map(async (region) => {
-      const points = await fetchLeafSeries(retailSeriesUrl(code, region.key), parseWeeklyLeafPage);
+      const points = await fetchEiaSeries(retailSeriesId(code, region.key), 400, user);
       const snapshot = benchmarkFromSeries({
         key,
         label,
@@ -239,7 +222,7 @@ async function regionalRetailSnapshot({ key, label, code }) {
   };
 }
 
-async function livePricingSnapshot() {
+async function livePricingSnapshot(user = null) {
   const [
     wtiPoints,
     brentPoints,
@@ -252,16 +235,16 @@ async function livePricingSnapshot() {
     gasolineStockPoints,
     distillateStockPoints
   ] = await Promise.all([
-    fetchLeafSeries(EIA_LEAFHANDLER_URLS.wti, parseDailyLeafPage),
-    fetchLeafSeries(EIA_LEAFHANDLER_URLS.brent, parseDailyLeafPage),
-    fetchLeafSeries(EIA_LEAFHANDLER_URLS.gasoline, parseWeeklyLeafPage),
-    regionalRetailSnapshot({ key: "regular", label: "Regular Gasoline", code: "EMM_EPMR_PTE" }),
-    regionalRetailSnapshot({ key: "midgrade", label: "Midgrade Gasoline", code: "EMM_EPMM_PTE" }),
-    regionalRetailSnapshot({ key: "premium", label: "Premium Gasoline", code: "EMM_EPMP_PTE" }),
-    regionalRetailSnapshot({ key: "diesel", label: "Diesel", code: "EMD_EPD2D_PTE" }),
-    fetchLeafSeries(EIA_LEAFHANDLER_URLS.crudeStocks, parseWeeklyLeafPage),
-    fetchLeafSeries(EIA_LEAFHANDLER_URLS.gasolineStocks, parseWeeklyLeafPage),
-    fetchLeafSeries(EIA_LEAFHANDLER_URLS.distillateStocks, parseWeeklyLeafPage)
+    fetchEiaSeries(EIA_SERIES_IDS.wti, 400, user),
+    fetchEiaSeries(EIA_SERIES_IDS.brent, 400, user),
+    fetchEiaSeries(EIA_SERIES_IDS.gasoline, 400, user),
+    regionalRetailSnapshot({ key: "regular", label: "Regular Gasoline", code: "EMM_EPMR_PTE", user }),
+    regionalRetailSnapshot({ key: "midgrade", label: "Midgrade Gasoline", code: "EMM_EPMM_PTE", user }),
+    regionalRetailSnapshot({ key: "premium", label: "Premium Gasoline", code: "EMM_EPMP_PTE", user }),
+    regionalRetailSnapshot({ key: "diesel", label: "Diesel", code: "EMD_EPD2D_PTE", user }),
+    fetchEiaSeries(EIA_SERIES_IDS.crudeStocks, 120, user),
+    fetchEiaSeries(EIA_SERIES_IDS.gasolineStocks, 120, user),
+    fetchEiaSeries(EIA_SERIES_IDS.distillateStocks, 120, user)
   ]);
 
   return {
@@ -283,15 +266,43 @@ async function livePricingSnapshot() {
   };
 }
 
-function opisCredentials() {
-  return {
+async function opisCredentials(user) {
+  const envCredentials = {
     username: process.env.OPIS_USERNAME || "",
     password: process.env.OPIS_PASSWORD || ""
   };
+  if (envCredentials.username && envCredentials.password) {
+    return envCredentials;
+  }
+  if (!user?.jobberId) {
+    return envCredentials;
+  }
+
+  const result = await query(
+    `SELECT encrypted_json AS "encryptedJson"
+     FROM jobber_secrets
+     WHERE jobber_id=$1 AND provider='opis'
+     LIMIT 1`,
+    [user.jobberId]
+  );
+  if (result.rowCount === 0) {
+    return envCredentials;
+  }
+
+  const decrypted = decryptJson(result.rows[0].encryptedJson || {});
+  return {
+    username: String(decrypted.username || ""),
+    password: String(decrypted.password || "")
+  };
 }
 
-async function opisAuthenticate() {
-  const credentials = opisCredentials();
+async function hasOpisCredentials(user) {
+  const credentials = await opisCredentials(user);
+  return Boolean(credentials.username && credentials.password);
+}
+
+async function opisAuthenticate(user) {
+  const credentials = await opisCredentials(user);
   if (!credentials.username || !credentials.password) {
     throw new Error("OPIS credentials are missing. Set OPIS_USERNAME and OPIS_PASSWORD.");
   }
@@ -497,8 +508,8 @@ async function opisMetadata(token) {
   return value;
 }
 
-async function opisMarketSnapshot({ timing = "0", state = "ALL", fuelType = "all" }) {
-  const token = await opisAuthenticate();
+async function opisMarketSnapshot({ timing = "0", state = "ALL", fuelType = "all", user = null }) {
+  const token = await opisAuthenticate(user);
   const metadata = await opisMetadata(token);
   const selectedFuelType = OPIS_FUEL_TYPE_OPTIONS.find((option) => option.value === fuelType)?.opisValue || "";
   const requestedState = state === "ALL" ? "" : state;
@@ -1184,8 +1195,13 @@ app.get("/health", (_req, res) => {
 app.get(
   "/market/pricing",
   requireAuth,
-  asyncHandler(async (_req, res) => {
-    const snapshot = await livePricingSnapshot();
+  asyncHandler(async (req, res) => {
+    if (!(await hasEiaApiKey(req.user))) {
+      return res.status(503).json({
+        error: "EIA_API_KEY is missing. Set EIA_API_KEY to enable live EIA pricing."
+      });
+    }
+    const snapshot = await livePricingSnapshot(req.user);
     res.json(snapshot);
   })
 );
@@ -1194,12 +1210,267 @@ app.get(
   "/market/opis",
   requireAuth,
   asyncHandler(async (req, res) => {
+    if (!(await hasOpisCredentials(req.user))) {
+      return res.status(503).json({
+        error: "OPIS credentials are missing. Set OPIS_USERNAME and OPIS_PASSWORD."
+      });
+    }
     const snapshot = await opisMarketSnapshot({
       timing: String(req.query.timing || "0"),
       state: String(req.query.state || "ALL"),
-      fuelType: String(req.query.fuelType || "all")
+      fuelType: String(req.query.fuelType || "all"),
+      user: req.user
     });
     res.json(snapshot);
+  })
+);
+
+app.get(
+  "/sites/:id/pricing-configs",
+  requireAuth,
+  requireSiteAccess,
+  asyncHandler(async (req, res) => {
+    const result = await query(
+      `SELECT
+        pricing_key AS "pricingKey",
+        formula_id AS "formulaId",
+        fuel_type AS "fuelType",
+        product_name AS "productName",
+        market_label AS "marketLabel",
+        config_json AS "config",
+        updated_at AS "updatedAt",
+        updated_by AS "updatedBy"
+       FROM site_pricing_configs
+       WHERE site_id=$1
+       ORDER BY pricing_key`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  })
+);
+
+app.put(
+  "/sites/:id/pricing-configs",
+  requireAuth,
+  requireSiteAccess,
+  asyncHandler(async (req, res) => {
+    const siteId = req.params.id;
+    const body = req.body || {};
+    const pricingKey = String(body.pricingKey || "").trim();
+    const formulaId = String(body.formulaId || "").trim();
+    const productName = String(body.productName || "").trim();
+    const marketLabel = String(body.marketLabel || "").trim();
+    const config = body.config && typeof body.config === "object" ? body.config : null;
+
+    if (!pricingKey || !formulaId || !productName || !marketLabel || !config) {
+      return res.status(400).json({ error: "Missing pricing config fields" });
+    }
+
+    const now = new Date().toISOString();
+    const result = await query(
+      `INSERT INTO site_pricing_configs(
+        site_id, pricing_key, formula_id, product_name, market_label, config_json, updated_at, updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      ON CONFLICT (site_id, pricing_key)
+      DO UPDATE SET
+        formula_id=EXCLUDED.formula_id,
+        product_name=EXCLUDED.product_name,
+        market_label=EXCLUDED.market_label,
+        config_json=EXCLUDED.config_json,
+        updated_at=EXCLUDED.updated_at,
+        updated_by=EXCLUDED.updated_by
+      RETURNING
+        pricing_key AS "pricingKey",
+        formula_id AS "formulaId",
+        product_name AS "productName",
+        market_label AS "marketLabel",
+        config_json AS "config",
+        updated_at AS "updatedAt",
+        updated_by AS "updatedBy"`,
+      [siteId, pricingKey, formulaId, productName, marketLabel, JSON.stringify(config), now, req.user.userId]
+    );
+    res.json(result.rows[0]);
+  })
+);
+
+app.get(
+  "/jobber/pricing-configs",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
+    const result = await query(
+      `SELECT
+        pricing_key AS "pricingKey",
+        formula_id AS "formulaId",
+        fuel_type AS "fuelType",
+        product_name AS "productName",
+        market_label AS "marketLabel",
+        config_json AS "config",
+        updated_at AS "updatedAt",
+        updated_by AS "updatedBy"
+       FROM jobber_pricing_configs
+       WHERE jobber_id=$1
+       ORDER BY pricing_key`,
+      [req.user.jobberId]
+    );
+    res.json(result.rows);
+  })
+);
+
+app.put(
+  "/jobber/pricing-configs",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
+    const body = req.body || {};
+    const pricingKey = String(body.pricingKey || "").trim();
+    const formulaId = String(body.formulaId || "").trim();
+    const fuelType = String(body.fuelType || "").trim();
+    const productName = String(body.productName || "").trim();
+    const marketLabel = String(body.marketLabel || "").trim();
+    const config = body.config && typeof body.config === "object" ? body.config : null;
+
+    if (!pricingKey || !formulaId || !fuelType || !productName || !marketLabel || !config) {
+      return res.status(400).json({ error: "Missing pricing config fields" });
+    }
+
+    const now = new Date().toISOString();
+    const result = await query(
+      `INSERT INTO jobber_pricing_configs(
+        jobber_id, pricing_key, formula_id, fuel_type, product_name, market_label, config_json, updated_at, updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT (jobber_id, pricing_key)
+      DO UPDATE SET
+        formula_id=EXCLUDED.formula_id,
+        fuel_type=EXCLUDED.fuel_type,
+        product_name=EXCLUDED.product_name,
+        market_label=EXCLUDED.market_label,
+        config_json=EXCLUDED.config_json,
+        updated_at=EXCLUDED.updated_at,
+        updated_by=EXCLUDED.updated_by
+      RETURNING
+        pricing_key AS "pricingKey",
+        formula_id AS "formulaId",
+        fuel_type AS "fuelType",
+        product_name AS "productName",
+        market_label AS "marketLabel",
+        config_json AS "config",
+        updated_at AS "updatedAt",
+        updated_by AS "updatedBy"`,
+      [req.user.jobberId, pricingKey, formulaId, fuelType, productName, marketLabel, JSON.stringify(config), now, req.user.userId]
+    );
+    res.json(result.rows[0]);
+  })
+);
+
+app.get(
+  "/jobber/opis-credentials",
+  requireAuth,
+  requireRole("admin"),
+  asyncHandler(async (req, res) => {
+    if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
+    const result = await query(
+      `SELECT updated_at AS "updatedAt", updated_by AS "updatedBy"
+       FROM jobber_secrets
+       WHERE jobber_id=$1 AND provider='opis'
+       LIMIT 1`,
+      [req.user.jobberId]
+    );
+    if (result.rowCount === 0) {
+      return res.json({ configured: false });
+    }
+    res.json({
+      configured: true,
+      updatedAt: result.rows[0].updatedAt,
+      updatedBy: result.rows[0].updatedBy
+    });
+  })
+);
+
+app.put(
+  "/jobber/opis-credentials",
+  requireAuth,
+  requireRole("admin"),
+  asyncHandler(async (req, res) => {
+    if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
+    const username = String(req.body?.username || "").trim();
+    const password = String(req.body?.password || "").trim();
+    if (!username || !password) {
+      return res.status(400).json({ error: "username and password are required" });
+    }
+    const now = new Date().toISOString();
+    const encrypted = encryptJson({ username, password });
+    const result = await query(
+      `INSERT INTO jobber_secrets(jobber_id, provider, encrypted_json, updated_at, updated_by)
+       VALUES ($1,'opis',$2,$3,$4)
+       ON CONFLICT (jobber_id, provider)
+       DO UPDATE SET
+         encrypted_json=EXCLUDED.encrypted_json,
+         updated_at=EXCLUDED.updated_at,
+         updated_by=EXCLUDED.updated_by
+       RETURNING updated_at AS "updatedAt", updated_by AS "updatedBy"`,
+      [req.user.jobberId, JSON.stringify(encrypted), now, req.user.userId]
+    );
+    res.json({
+      configured: true,
+      updatedAt: result.rows[0].updatedAt,
+      updatedBy: result.rows[0].updatedBy
+    });
+  })
+);
+
+app.get(
+  "/jobber/eia-credentials",
+  requireAuth,
+  requireRole("admin"),
+  asyncHandler(async (req, res) => {
+    if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
+    const result = await query(
+      `SELECT updated_at AS "updatedAt", updated_by AS "updatedBy"
+       FROM jobber_secrets
+       WHERE jobber_id=$1 AND provider='eia'
+       LIMIT 1`,
+      [req.user.jobberId]
+    );
+    if (result.rowCount === 0) {
+      return res.json({ configured: false });
+    }
+    res.json({
+      configured: true,
+      updatedAt: result.rows[0].updatedAt,
+      updatedBy: result.rows[0].updatedBy
+    });
+  })
+);
+
+app.put(
+  "/jobber/eia-credentials",
+  requireAuth,
+  requireRole("admin"),
+  asyncHandler(async (req, res) => {
+    if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
+    const apiKey = normalizeEiaApiKey(req.body?.apiKey || "");
+    if (!apiKey) {
+      return res.status(400).json({ error: "apiKey is required" });
+    }
+    const now = new Date().toISOString();
+    const encrypted = encryptJson({ apiKey });
+    const result = await query(
+      `INSERT INTO jobber_secrets(jobber_id, provider, encrypted_json, updated_at, updated_by)
+       VALUES ($1,'eia',$2,$3,$4)
+       ON CONFLICT (jobber_id, provider)
+       DO UPDATE SET
+         encrypted_json=EXCLUDED.encrypted_json,
+         updated_at=EXCLUDED.updated_at,
+         updated_by=EXCLUDED.updated_by
+       RETURNING updated_at AS "updatedAt", updated_by AS "updatedBy"`,
+      [req.user.jobberId, JSON.stringify(encrypted), now, req.user.userId]
+    );
+    res.json({
+      configured: true,
+      updatedAt: result.rows[0].updatedAt,
+      updatedBy: result.rows[0].updatedBy
+    });
   })
 );
 

@@ -16,17 +16,10 @@ Run `Petroleum` locally when needed, and keep the public deployment state on **R
 - More recent pushed commits after the original handoff:
   - `1fb6a72` - `Update auth, pricing dashboard, and admin workflows`
   - `0843bba` - `Reduce local SQL dump tank history density`
-  - `a807a56` - `Add pricing handoff and regional fuel cards`
 - `petroleum-local.sql` was reduced from roughly `79 MB` to roughly `13 MB` by thinning tank history from `5-minute` intervals to `30-minute` intervals.
 - Local git identity observed in this environment:
   - `user.name = DWANNER1`
   - `user.email = 114098810+DWANNER1@users.noreply.github.com`
-- Current local worktree is **not clean**. Uncommitted files at handoff time:
-  - `apps/api/src/server.js`
-  - `apps/web/src/api.js`
-  - `apps/web/src/pricing/pages/PricingPage.tsx`
-  - `apps/web/src/pricing/services/marketDataService.ts`
-  - `apps/web/src/pricing/types/market.ts`
 
 ## Local Runtime Status
 - PostgreSQL is installed locally via Chocolatey.
@@ -44,20 +37,13 @@ Run `Petroleum` locally when needed, and keep the public deployment state on **R
   - `http://localhost:5173`
 - Important startup note:
   - the API must be started with local database env vars set, or login will fail with `Postgres connection is missing`
+  - secure jobber secret decryption also requires an app encryption key
   - use:
 
 ```powershell
 $env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
 $env:PGSSL='disable'
-```
-
-- Important OPIS startup note:
-  - the local API must also be started with OPIS credentials in env vars for the OPIS tab to work
-  - use:
-
-```powershell
-$env:OPIS_USERNAME='...'
-$env:OPIS_PASSWORD='...'
+$env:PETROLEUM_SECRET_KEY='your-stable-secret-key'
 ```
 
 ## Public Deployment Status
@@ -96,19 +82,58 @@ $env:OPIS_PASSWORD='...'
   - chart commentary is shown in hover popups on chart titles instead of separate side cards
 - Header source badges now show source detail on hover rather than using a dedicated `Source coverage` card.
 
-### 3. Live EIA data wiring added
+### 3. Live EIA data wiring was migrated to official EIA API v2
 - Frontend `Update now` no longer only restamps the page.
 - API route added:
   - `GET /market/pricing`
-- Route currently fetches live EIA pricing/inventory data and returns dashboard snapshot JSON.
+- Route now fetches live EIA pricing/inventory data through official `https://api.eia.gov/v2/seriesid/...` calls.
+- The old `LeafHandler.ashx` scraping path was removed after EIA started returning `403`.
+- The route requires an EIA API key.
+- The EIA key can come from either:
+  - `EIA_API_KEY` in the API process env, or
+  - encrypted jobber secret storage in the local database
 - Frontend service now calls that route and only falls back to local mock JSON if the live request fails.
 - Forward curves and some narrative inputs are still mock-backed for now.
 - Relevant files:
   - `apps/api/src/server.js`
+  - `apps/api/src/secrets.js`
   - `apps/web/src/api.js`
   - `apps/web/src/pricing/services/marketDataService.ts`
 
-### 4. EIA regional fuel grades added to Pricing cards
+### 4. OPIS credentials moved to encrypted jobber-level database storage
+- OPIS no longer has to rely only on `OPIS_USERNAME` and `OPIS_PASSWORD` in the process env.
+- Current lookup order for OPIS credentials:
+  - `OPIS_USERNAME` / `OPIS_PASSWORD` env vars first
+  - encrypted `jobber_secrets` row for provider `opis` second
+- Admin UI now has an `OPIS Credentials` form under the Branding workspace for jobber admins.
+- Credentials are encrypted before they are stored in Postgres.
+
+### 5. EIA API key moved to encrypted jobber-level database storage
+- Current lookup order for EIA credentials:
+  - `EIA_API_KEY` env var first
+  - encrypted `jobber_secrets` row for provider `eia` second
+- Admin UI now has an `EIA API Key` form under the Branding workspace for jobber admins.
+- The backend normalizes pasted EIA email text and extracts the actual token if the full email body was pasted by mistake.
+
+### 6. OPIS page redesign and pricing workflow changes
+- The OPIS view is now a simpler market monitor:
+  - top card with `State`, `City`, and `Refresh`
+  - market table below with `Low`, `High`, `Avg`, `Spot USD/gal`, `Change`, and `Est. Price`
+- Clicking `Est. Price` opens a single editable pricing panel below instead of showing many cards at once.
+- The save button is a single bottom-right button.
+- Saved editable values now populate the form inputs as the starting values.
+
+### 7. Pricing persistence is now jobber/location/fuel scoped
+- Editable pricing values are no longer stored per site.
+- Current persistence model is:
+  - per `jobber`
+  - per `location` / `market_label`
+  - per `fuel type bucket` / formula bucket
+- The table storing this is `jobber_pricing_configs`.
+- Displayed estimated prices are still calculated per visible OPIS row using that row’s own market average.
+- Saved multipliers/adders are shared at the jobber/location/fuel bucket level.
+
+### 8. EIA regional fuel grades added to Pricing cards
 - Pricing cards now include:
   - `WTI Crude`
   - `Brent Crude`
@@ -127,44 +152,7 @@ $env:OPIS_PASSWORD='...'
   - `West Coast`
 - KPI sparkline tooltips now use real EIA date anchors instead of synthetic `1, 2, 3...` labels.
 
-### 5. OPIS Rack API integration added
-- OPIS credentials were tested successfully against:
-  - `POST https://rackapi.opisnet.com/api/v1/Authenticate`
-- Verified working OPIS endpoints included:
-  - `Country`
-  - `City`
-  - `Product`
-  - `BenchmarkType`
-  - `Summary?timing=0`
-- New local API route added:
-  - `GET /market/opis`
-- Current OPIS route behavior:
-  - authenticates to OPIS using `OPIS_USERNAME` and `OPIS_PASSWORD`
-  - fetches OPIS metadata and summary data
-  - returns current OPIS rows plus timing snapshots for comparison
-- Frontend OPIS tab was added as a third Pricing section beside `Prices` and `Trends`
-- Current OPIS view work includes:
-  - top filter area for `Timing`, `State`, and `City`
-  - grouped product filters with select-all / clear-all
-  - timing comparison chart
-  - OPIS commentary cards
-  - live wholesale rack summary table
-
-### 6. OPIS UI issue remains unresolved at handoff
-- The OPIS `Apply Filters` control has been reworked multiple times and is present in code.
-- Despite rebuilds and local web restarts, the user still reported:
-  - the action button is barely visible or blank
-  - the action area is not clickable in the browser
-- Most likely next step for a new agent:
-  - inspect the live DOM/CSS in-browser rather than continuing blind layout edits
-  - look for a global overlay, stacking-context issue, masked text color, or another app-level style affecting controls inside the OPIS section
-- The latest intent of the OPIS layout is:
-  - selectors on top
-  - grouped/shaded product filters below
-  - one dedicated action bar with `Apply Filters`
-  - data sections below
-
-### 7. Prior functional changes from the earlier session still exist
+### 9. Prior functional changes from the earlier session still exist
 - Tank review UI and charts
 - revised Work Queue incident behavior
 - brighter dropdown styling
@@ -178,13 +166,12 @@ $env:OPIS_PASSWORD='...'
 - Local API health endpoint succeeded:
   - `http://localhost:4000/health`
 - Local Pricing API route was verified after restart with demo login.
-- Verified live pricing payload included:
+- Verified pricing payload shape included:
   - benchmark keys: `wti, brent, gasoline, regular, midgrade, premium, diesel`
   - regional sets for `regular` and `diesel`: `NUS, R10, R20, R30, R40, R50`
-- OPIS auth and API were also verified locally:
-  - successful OPIS auth response on `March 25, 2026`
-  - local `/market/opis` returned live data
-  - route currently returns full OPIS rows and timing snapshots
+- Verified encrypted secret save paths were added for:
+  - `GET/PUT /jobber/opis-credentials`
+  - `GET/PUT /jobber/eia-credentials`
 - Earlier tank validations from the original handoff still apply, but note the local SQL dump was later thinned back to `30-minute` history.
 
 ## Railway Database Reseed Status
@@ -205,6 +192,7 @@ cd C:\Users\deepa\source\repos\Petroleum
 
 $env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
 $env:PGSSL='disable'
+$env:PETROLEUM_SECRET_KEY='your-stable-secret-key'
 
 npm.cmd run seed
 npm.cmd run dev
@@ -217,8 +205,7 @@ cd C:\Users\deepa\source\repos\Petroleum
 
 $env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
 $env:PGSSL='disable'
-$env:OPIS_USERNAME='...'
-$env:OPIS_PASSWORD='...'
+$env:PETROLEUM_SECRET_KEY='your-stable-secret-key'
 
 npm.cmd --workspace apps/api run dev
 npm.cmd --workspace apps/web run dev
@@ -253,16 +240,17 @@ npm.cmd --workspace apps/api run seed
 - Netlify and Railway config files did not require code changes for this session's work.
 - Pricing page notes:
   - current live market route is `GET /market/pricing`
-  - route uses live EIA public pages for benchmark and inventory data
+  - route now uses official EIA API v2 seriesid endpoints
+  - it requires a valid EIA key from env or encrypted jobber storage
   - forward curves are still mock data
   - `Update now` triggers a fresh dashboard reload, but only EIA-backed sections are truly live
-  - if the Pricing page stops updating, check whether the API was started without `DATABASE_URL` and `PGSSL`
-- OPIS notes:
-  - current live OPIS route is `GET /market/opis`
-  - it depends on `OPIS_USERNAME` and `OPIS_PASSWORD`
-  - OPIS metadata and summary endpoints are reachable with the tested account
-  - the OPIS tab is partly complete but still has a user-reported control-rendering issue around the `Apply Filters` action
-  - a new agent should begin by inspecting the live page in-browser rather than making another blind styling pass
-- EIA key note:
-  - an EIA API key was provided in chat during this session, but the current implementation does **not** depend on it because the route is scraping EIA public `LeafHandler` history pages
-  - if a future agent moves to official EIA API endpoints, store the key in env vars and remove it from chat-dependent workflow
+  - if the Pricing page stops updating, check `DATABASE_URL`, `PGSSL`, `PETROLEUM_SECRET_KEY`, and whether the current jobber has an EIA key configured
+- OPIS page notes:
+  - current live market route is `GET /market/opis`
+  - it requires valid OPIS credentials from env or encrypted jobber storage
+  - Admin > Branding now includes both OPIS and EIA credential forms for jobber admins
+- Secret storage note:
+  - encrypted secrets are stored in `jobber_secrets`
+  - pricing rate configs are stored in `jobber_pricing_configs`
+  - if `PETROLEUM_SECRET_KEY` changes between restarts, previously saved encrypted secrets will no longer decrypt
+

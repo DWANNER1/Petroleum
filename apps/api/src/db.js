@@ -241,6 +241,45 @@ async function initDb() {
       reason TEXT,
       created_at TIMESTAMPTZ NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS site_pricing_configs (
+      site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      pricing_key TEXT NOT NULL,
+      formula_id TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      market_label TEXT NOT NULL,
+      config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL,
+      updated_by TEXT NOT NULL,
+      PRIMARY KEY (site_id, pricing_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS jobber_pricing_configs (
+      jobber_id TEXT NOT NULL REFERENCES jobbers(id) ON DELETE CASCADE,
+      pricing_key TEXT NOT NULL,
+      formula_id TEXT NOT NULL,
+      fuel_type TEXT NOT NULL DEFAULT '',
+      product_name TEXT NOT NULL,
+      market_label TEXT NOT NULL,
+      config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL,
+      updated_by TEXT NOT NULL,
+      PRIMARY KEY (jobber_id, pricing_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS jobber_secrets (
+      jobber_id TEXT NOT NULL REFERENCES jobbers(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      encrypted_json JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      updated_by TEXT NOT NULL,
+      PRIMARY KEY (jobber_id, provider)
+    );
+  `);
+
+  await query(`
+    ALTER TABLE jobber_pricing_configs
+    ADD COLUMN IF NOT EXISTS fuel_type TEXT NOT NULL DEFAULT '';
   `);
 
   await query(`

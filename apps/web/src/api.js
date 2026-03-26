@@ -77,6 +77,24 @@ async function request(path, options = {}) {
 export const api = {
   getSessionUser: () => request("/auth/me"),
   getCurrentJobber: () => request("/jobber"),
+  getJobberEiaCredentialsStatus: () => request("/jobber/eia-credentials"),
+  saveJobberEiaCredentials: (payload) =>
+    request("/jobber/eia-credentials", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
+  getJobberOpisCredentialsStatus: () => request("/jobber/opis-credentials"),
+  saveJobberOpisCredentials: (payload) =>
+    request("/jobber/opis-credentials", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
+  getJobberPricingConfigs: () => request("/jobber/pricing-configs"),
+  saveJobberPricingConfig: (payload) =>
+    request("/jobber/pricing-configs", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
   updateCurrentJobber: (payload) =>
     request("/jobber", {
       method: "PATCH",
@@ -104,6 +122,12 @@ export const api = {
     }),
   getSites: () => request("/sites"),
   getSite: (siteId) => request(`/sites/${siteId}`),
+  getSitePricingConfigs: (siteId) => request(`/sites/${siteId}/pricing-configs`),
+  saveSitePricingConfig: (siteId, payload) =>
+    request(`/sites/${siteId}/pricing-configs`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
   getPumps: (siteId) => request(`/sites/${siteId}/pumps`),
   createSite: (payload) =>
     request("/sites", {
