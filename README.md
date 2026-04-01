@@ -16,6 +16,12 @@ MVP scaffold for a multi-site gas station monitoring platform based on:
 
 The API requires `DATABASE_URL` and persists all app data in PostgreSQL.
 
+Secret-backed integrations also require a stable app encryption key:
+
+- `PETROLEUM_SECRET_KEY` is used to encrypt and decrypt saved OPIS and EIA credentials in `jobber_secrets`.
+- If this key changes between restarts, previously saved OPIS and EIA values will no longer decrypt.
+- If that happens, re-save the credentials from the Admin UI or provide `OPIS_USERNAME` / `OPIS_PASSWORD` and `EIA_API_KEY` in the process environment.
+
 ## Local-Only Workflow (Recommended)
 
 Use this flow to make and test all changes locally first, then deploy only when ready.
@@ -40,12 +46,18 @@ This creates `.env` from `.env.example` and installs dependencies.
 ```powershell
 $env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
 $env:PGSSL='disable'
+$env:PETROLEUM_SECRET_KEY='your-stable-secret-key'
 npm.cmd run seed
 ```
+
+This also seeds deterministic Allied controller transaction test data into `allied_transactions`.
 
 4. Start all apps locally:
 
 ```powershell
+$env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
+$env:PGSSL='disable'
+$env:PETROLEUM_SECRET_KEY='your-stable-secret-key'
 npm.cmd run dev
 ```
 
@@ -53,6 +65,16 @@ Services:
 
 - Web: `http://localhost:5173`
 - API: `http://localhost:4000`
+
+Mandatory verification before sign-off:
+
+- Do not report work as complete until both local services are verified as reachable.
+- Check that the web host returns successfully on `http://localhost:5173`.
+- Check that the API returns successfully on `http://localhost:4000`.
+- After the final restart, re-check the actual running services rather than relying on an earlier result.
+- If login, pricing, Allied, or any other page depends on the API, verify the API is actually running before concluding the feature is working.
+- If you add or change an API route, probe that route directly and confirm it does not return `Cannot GET ...`.
+- In any status update or handoff, explicitly state whether the web and API ports were checked and what they returned.
 
 Demo users:
 
@@ -78,12 +100,18 @@ npm install
 ```bash
 export DATABASE_URL=postgres://postgres:postgres@localhost:5432/petroleum
 export PGSSL=disable
+export PETROLEUM_SECRET_KEY=your-stable-secret-key
 npm run seed
 ```
+
+This also seeds deterministic Allied controller transaction test data into `allied_transactions`.
 
 3. Start all apps:
 
 ```bash
+export DATABASE_URL=postgres://postgres:postgres@localhost:5432/petroleum
+export PGSSL=disable
+export PETROLEUM_SECRET_KEY=your-stable-secret-key
 npm run dev
 ```
 
@@ -91,6 +119,16 @@ Services:
 
 - Web: `http://localhost:5173`
 - API: `http://localhost:4000`
+
+Mandatory verification before sign-off:
+
+- Do not report work as complete until both local services are verified as reachable.
+- Check that the web host returns successfully on `http://localhost:5173`.
+- Check that the API returns successfully on `http://localhost:4000`.
+- After the final restart, re-check the actual running services rather than relying on an earlier result.
+- If login, pricing, Allied, or any other page depends on the API, verify the API is actually running before concluding the feature is working.
+- If you add or change an API route, probe that route directly and confirm it does not return `Cannot GET ...`.
+- In any status update or handoff, explicitly state whether the web and API ports were checked and what they returned.
 
 Demo users:
 
@@ -105,7 +143,7 @@ Demo users:
 
 ## Hosting
 
-Current production deployment has moved to Render. The Netlify and Railway notes below are legacy setup notes from the earlier MVP hosting path and should not be used as the source of truth for new auth work.
+Current production deployment has moved to Render. The Netlify and Railway notes below are legacy setup notes from the earlier MVP hosting path. Keep them only as reference for older infrastructure, not as the current source of truth for production auth or deployment.
 
 This repository is configured for:
 
@@ -118,6 +156,8 @@ The exact live URL is not stored in this repo. You can find it in:
 - Railway service dashboard: Deployment URL (and API domain)
 
 ## Deployment (Free): Netlify + Railway
+
+This section documents the previous free-hosting path kept in the repo via `netlify.toml` and `railway.json`. Use it only if you intentionally want to reproduce that older setup.
 
 ### API on Railway
 
@@ -149,19 +189,25 @@ The exact live URL is not stored in this repo. You can find it in:
 - Ingestion protocols (ATG/Gilbarco) are simulator-only in this iteration.
 - Forecourt layout editor and layout version save are implemented in MVP form.
 - Portfolio map uses OpenStreetMap tiles and geocodes sites from `address + postal_code`.
+- Allied transaction generator and usage notes live in `docs/allied-transactions.md`.
+- AWS migration handoff notes live in `docs/aws-migration-handoff.md`.
 
 ## Pricing Dashboard
 
 The `Pricing` tab adds an Energy Market Dashboard for crude, gasoline, diesel, inventories, and forward curve context.
 
 - Benchmark KPI cards show current levels, daily and weekly moves, sparklines, and a simple rising/falling/stable status.
-- The Price Trends panel plots WTI, Brent, gasoline, and diesel with `7D`, `30D`, `90D`, and `1Y` views.
-- The Inventory Trends panel compares crude, gasoline, and distillate stocks in either absolute terms or week-over-week change, with annotation markers for notable draws and builds.
-- The Futures / Forward Curve panel summarizes whether each market is in backwardation, contango, or roughly flat structure.
-- The right-side insight cards generate concise drivers, a short outlook, and source coverage notes for business users.
+- The dashboard includes `WTI Crude`, `Brent Crude`, `RBOB Gasoline`, `Regular Gasoline`, `Midgrade Gasoline`, `Premium Gasoline`, and `Diesel`, plus inventory KPI cards.
+- The market monitor supports a `Section` switch between `Prices` and `Trends`.
+- Regional EIA views are available for the retail fuel cards with `U.S.`, `East Coast`, `Midwest`, `Gulf Coast`, `Rocky Mountain`, and `West Coast`.
+- The Price Trends and inventory views use live EIA-backed data where available. Forward curves and some narrative inputs remain mock-backed.
+- OPIS market pricing is exposed separately through the OPIS market views and API routes.
 
 Data and logic locations:
 
-- Mock files live in `apps/web/src/pricing/data/benchmarkPrices.json`, `apps/web/src/pricing/data/inventoryTrends.json`, `apps/web/src/pricing/data/forwardCurves.json`, and `apps/web/src/pricing/data/narrativeDrivers.json`.
-- The data service lives in `apps/web/src/pricing/services/marketDataService.ts`. That is the main place to connect production EIA, CME, ICE, and NRCan APIs later.
+- Live pricing data is served by `GET /market/pricing` in `apps/api/src/server.js` and consumed by `apps/web/src/pricing/services/marketDataService.ts`.
+- The API uses official EIA API v2 `seriesid` endpoints for crude, retail fuel pricing, and inventory series.
+- The EIA API key can come from `EIA_API_KEY` in the process environment or from encrypted jobber-level storage configured in Admin.
+- OPIS market data is served by `GET /market/opis` and `GET /market/opis/raw`.
+- Mock files still live in `apps/web/src/pricing/data/benchmarkPrices.json`, `apps/web/src/pricing/data/inventoryTrends.json`, `apps/web/src/pricing/data/forwardCurves.json`, and `apps/web/src/pricing/data/narrativeDrivers.json` as fallbacks or for non-live sections.
 - Narrative and outlook logic lives in `apps/web/src/pricing/utils/marketCalculations.ts`. `buildInsightSummary()` controls the generated bullets, curve interpretation, confidence, and short outlook text.
