@@ -133,7 +133,17 @@ function PageShell({ user, jobber, onLogout, children }) {
               Responsive rebuild track for desktop and phone
             </Typography>
           </Box>
-          <Chip color="primary" variant="outlined" label="Primary UI" />
+          <Chip
+            color="primary"
+            variant="outlined"
+            label={location.pathname === "/" ? "Map" : "Primary UI"}
+            onClick={
+              location.pathname === "/"
+                ? () => window.dispatchEvent(new CustomEvent("petroleum:dashboard-home"))
+                : undefined
+            }
+            sx={location.pathname === "/" ? { cursor: "pointer" } : undefined}
+          />
         </Toolbar>
       </AppBar>
 

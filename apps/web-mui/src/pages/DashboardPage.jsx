@@ -32,8 +32,11 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import RouterIcon from "@mui/icons-material/Router";
 import OilBarrelIcon from "@mui/icons-material/OilBarrel";
 import PaymentsIcon from "@mui/icons-material/Payments";
+import FlashOnIcon from "@mui/icons-material/FlashOn";
 import { api } from "../api";
 import { SiteMap } from "../components/SiteMap";
+import ReactECharts from "echarts-for-react";
+import { SiteAlertsDialog } from "../components/SiteAlertsDialog";
 
 const FILTERS = {
   all: "all",
@@ -113,6 +116,73 @@ function buildConnectivityFeed(sites) {
     .slice(0, 8);
 }
 
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function formatVolume(value) {
+  return `${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} Gal`;
+}
+
+function buildTankGaugeOption(fillPercent) {
+  const safeValue = Math.max(0, Math.min(100, Number(fillPercent) || 0));
+  return {
+    animation: false,
+    series: [
+      {
+        type: "gauge",
+        startAngle: 205,
+        endAngle: -25,
+        min: 0,
+        max: 100,
+        center: ["50%", "63%"],
+        radius: "96%",
+        axisLine: {
+          lineStyle: {
+            width: 14,
+            color: [
+              [0.15, "#d14343"],
+              [0.35, "#c77700"],
+              [1, "#2e7d32"]
+            ]
+          }
+        },
+        pointer: {
+          length: "68%",
+          width: 5,
+          itemStyle: { color: "#0b5fff" }
+        },
+        anchor: {
+          show: true,
+          size: 10,
+          itemStyle: {
+            color: "#173447",
+            borderColor: "#ffffff",
+            borderWidth: 2
+          }
+        },
+        axisTick: { show: false },
+        splitLine: { show: false },
+        axisLabel: { show: false },
+        detail: {
+          valueAnimation: false,
+          offsetCenter: [0, "30%"],
+          fontSize: 15,
+          fontWeight: 700,
+          color: "#173447",
+          formatter: "{value}%"
+        },
+        title: {
+          offsetCenter: [0, "44%"],
+          color: "#59758a",
+          fontSize: 9
+        },
+        data: [{ value: Number(safeValue.toFixed(1)), name: "fill" }]
+      }
+    ]
+  };
+}
+
 function initialAgentLog(site) {
   if (!site) return [];
   return [
@@ -133,7 +203,11 @@ function SummaryCard({ icon, label, value, tone = "default", caption, onClick, a
           <Typography variant="body2" color="text.secondary">{label}</Typography>
           {icon}
         </Stack>
-        <Typography variant="h4">{value}</Typography>
+        {typeof value === "string" || typeof value === "number" ? (
+          <Typography variant="h4">{value}</Typography>
+        ) : (
+          value
+        )}
         {caption ? <Typography variant="body2" color="text.secondary">{caption}</Typography> : null}
       </Stack>
     </CardContent>
@@ -158,6 +232,34 @@ function SummaryCard({ icon, label, value, tone = "default", caption, onClick, a
   );
 }
 
+function AlertBadge({ type, count, onClick }) {
+  if (!Number(count || 0)) return null;
+
+  const isCritical = type === "critical";
+  const Icon = isCritical ? FlashOnIcon : WarningAmberIcon;
+  const accent = isCritical ? "#d14343" : "#c77700";
+
+  return (
+    <Chip
+      size="small"
+      icon={<Icon sx={{ color: `${accent} !important` }} />}
+      label={`${count || 0}`}
+      variant="outlined"
+      onClick={onClick}
+      sx={{
+        color: accent,
+        borderColor: isCritical ? "rgba(209,67,67,0.4)" : "rgba(199,119,0,0.45)",
+        backgroundColor: isCritical ? "rgba(209,67,67,0.06)" : "rgba(199,119,0,0.10)",
+        cursor: onClick ? "pointer" : "default",
+        "& .MuiChip-label": {
+          px: 1,
+          fontWeight: 700
+        }
+      }}
+    />
+  );
+}
+
 export function DashboardPage() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
@@ -168,6 +270,12 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [filter, setFilter] = useState(FILTERS.all);
+  const [mobileView, setMobileView] = useState("map");
+  const [siteDetail, setSiteDetail] = useState(null);
+  const [siteTransactionSummary, setSiteTransactionSummary] = useState(null);
+  const [siteDetailLoading, setSiteDetailLoading] = useState(false);
+  const [siteDetailError, setSiteDetailError] = useState("");
+  const [alertsDialog, setAlertsDialog] = useState({ open: false, severity: "", siteId: "", siteName: "" });
   const [agentDraft, setAgentDraft] = useState("");
   const [agentLog, setAgentLog] = useState([]);
 
@@ -231,6 +339,59 @@ export function DashboardPage() {
     setAgentLog(initialAgentLog(selectedSite));
   }, [selectedSite]);
 
+  useEffect(() => {
+    let ignore = false;
+
+    if (!selectedSiteId) {
+      setSiteDetail(null);
+      setSiteTransactionSummary(null);
+      setSiteDetailError("");
+      setSiteDetailLoading(false);
+      return () => {
+        ignore = true;
+      };
+    }
+
+    async function loadSiteDetail() {
+      setSiteDetailLoading(true);
+      setSiteDetailError("");
+      try {
+        const [detail, alliedSummary] = await Promise.all([
+          api.getSite(selectedSiteId),
+          api.getAlliedTransactionsSummary(selectedSiteId, { preset: "30d" }).catch(() => null)
+        ]);
+        if (!ignore) {
+          setSiteDetail(detail);
+          setSiteTransactionSummary(alliedSummary);
+        }
+      } catch (nextError) {
+        if (!ignore) {
+          setSiteDetail(null);
+          setSiteTransactionSummary(null);
+          setSiteDetailError(nextError instanceof Error ? nextError.message : String(nextError || "Unable to load site detail"));
+        }
+      } finally {
+        if (!ignore) setSiteDetailLoading(false);
+      }
+    }
+
+    loadSiteDetail();
+    return () => {
+      ignore = true;
+    };
+  }, [selectedSiteId]);
+
+  useEffect(() => {
+    function handleDashboardHome() {
+      setMobileView("map");
+      setFilter(FILTERS.all);
+      setSelectedSiteId("");
+    }
+
+    window.addEventListener("petroleum:dashboard-home", handleDashboardHome);
+    return () => window.removeEventListener("petroleum:dashboard-home", handleDashboardHome);
+  }, []);
+
   const totals = useMemo(() => {
     return sites.reduce(
       (acc, site) => {
@@ -244,6 +405,28 @@ export function DashboardPage() {
       { critical: 0, warning: 0, expected: 0, connected: 0, atgReporting: 0 }
     );
   }, [sites]);
+
+  const affectedSiteCounts = useMemo(() => {
+    return sites.reduce(
+      (acc, site) => {
+        if (Number(site.criticalCount || 0) > 0) acc.critical += 1;
+        if (Number(site.warnCount || 0) > 0) acc.warning += 1;
+        return acc;
+      },
+      { critical: 0, warning: 0 }
+    );
+  }, [sites]);
+
+  const mobileSites = useMemo(() => {
+    const rows = [...filteredSites];
+    if (filter === FILTERS.critical) {
+      return rows.sort((a, b) => Number(b.criticalCount || 0) - Number(a.criticalCount || 0) || Number(b.warnCount || 0) - Number(a.warnCount || 0) || a.name.localeCompare(b.name));
+    }
+    if (filter === FILTERS.warning) {
+      return rows.sort((a, b) => Number(b.warnCount || 0) - Number(a.warnCount || 0) || Number(b.criticalCount || 0) - Number(a.criticalCount || 0) || a.name.localeCompare(b.name));
+    }
+    return rows.sort((a, b) => Number(b.criticalCount || 0) - Number(a.criticalCount || 0) || Number(b.warnCount || 0) - Number(a.warnCount || 0) || a.name.localeCompare(b.name));
+  }, [filteredSites, filter]);
 
   const networkHealth = totals.expected ? totals.connected / totals.expected : 0;
   const regionRows = useMemo(() => buildRegionRows(filteredSites), [filteredSites]);
@@ -260,6 +443,358 @@ export function DashboardPage() {
       `Local AI agent: preview shell only. Wire this panel to the real local agent workflow later for ${selectedSite.name}.`
     ]);
     setAgentDraft("");
+  }
+
+  function openMobileSiteList(nextFilter) {
+    setFilter(nextFilter);
+    setSelectedSiteId("");
+    setMobileView("sites");
+  }
+
+  function renderAlertSiteMetric(alerts, sitesCount) {
+    return (
+      <Stack direction="row" spacing={0.75} alignItems="baseline">
+        <Typography variant="h4">{alerts}</Typography>
+        <Typography variant="h6" color="text.secondary">/</Typography>
+        <Typography variant="h6" color="text.secondary">{sitesCount}</Typography>
+      </Stack>
+    );
+  }
+
+  const selectedSiteAssets = siteDetail || selectedSite;
+  const tankPreview = (selectedSiteAssets?.tanks || []).slice(0, 3);
+  const tankCount = selectedSiteAssets?.tanks?.length || 0;
+  const transactionKpis = siteTransactionSummary?.kpis || null;
+
+  function openAlertsDialog(site, severity) {
+    if (!site || !severity) return;
+    setAlertsDialog({ open: true, severity, siteId: site.id, siteName: site.name });
+  }
+
+  function renderSitePreview(showBackButton = false) {
+    return (
+      <Stack spacing={2}>
+        {showBackButton ? (
+          <Button variant="text" onClick={() => setMobileView("sites")}>
+            Back to Sites
+          </Button>
+        ) : null}
+
+        {siteDetailError ? <Alert severity="warning">{siteDetailError}</Alert> : null}
+
+        {siteDetailLoading ? (
+          <Card>
+            <CardContent>
+              <Typography color="text.secondary">Loading site detail...</Typography>
+            </CardContent>
+          </Card>
+        ) : !selectedSiteAssets ? (
+          <Card>
+            <CardContent>
+              <Typography color="text.secondary">Select a site to see pumps, tanks, and transaction health.</Typography>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <Card>
+              <CardContent>
+                <Stack spacing={1.5}>
+                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
+                    <div>
+                      <Typography variant="overline" color="text.secondary">Site Lens</Typography>
+                      <Typography variant="h5">{selectedSiteAssets.name}</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {[selectedSiteAssets.siteCode, selectedSiteAssets.region || "Unassigned"].filter(Boolean).join(" · ")}
+                      </Typography>
+                    </div>
+                    <Stack direction="row" spacing={0.75}>
+                      <AlertBadge type="critical" count={selectedSiteAssets.criticalCount || 0} onClick={() => openAlertsDialog(selectedSiteAssets, "critical")} />
+                      <AlertBadge type="warning" count={selectedSiteAssets.warnCount || 0} onClick={() => openAlertsDialog(selectedSiteAssets, "warning")} />
+                    </Stack>
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">
+                    {[selectedSiteAssets.address, selectedSiteAssets.postalCode].filter(Boolean).join(" ") || "No address"}
+                  </Typography>
+                </Stack>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent>
+                <Stack spacing={1.5}>
+                  <Typography variant="h6">Pumps</Typography>
+                  <Stack direction="row" justifyContent="space-between">
+                    <Typography variant="body2" color="text.secondary">Connected sides</Typography>
+                    <Typography variant="h4">{selectedSiteAssets.pumpSidesConnected || 0}</Typography>
+                  </Stack>
+                  <LinearProgress
+                    variant="determinate"
+                    value={Math.max(0, Math.min(100, siteHealth(selectedSiteAssets) * 100))}
+                    color={statusColor(siteHealth(selectedSiteAssets))}
+                    sx={{ height: 10, borderRadius: 999 }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    Red/yellow on the line indicates missing sides. ATG last seen: {formatDateTime(selectedSiteAssets.atgLastSeenAt)}
+                  </Typography>
+                </Stack>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent>
+                <Stack spacing={1.5}>
+                  <Typography variant="h6">Tank Snapshot</Typography>
+                  {tankPreview.length ? (
+                    <Grid container spacing={1.5}>
+                      {tankPreview.map((tank) => (
+                        <Grid key={tank.id} size={{ xs: 12, sm: 4 }}>
+                          <Card variant="outlined">
+                            <CardContent>
+                              <Stack spacing={1}>
+                                <Typography fontWeight={700}>{tank.label}</Typography>
+                                <Typography variant="caption" color="text.secondary">{tank.product || "Product n/a"}</Typography>
+                                {isMobile ? (
+                                  <Stack direction="row" alignItems="center" spacing={1} sx={{ pl: 0 }}>
+                                    <Box sx={{ height: 84, width: 120, ml: -1, flexShrink: 0 }}>
+                                      <ReactECharts option={buildTankGaugeOption(tank.fillPercent ?? tank.currentFillPercent ?? 0)} style={{ height: "100%", width: "100%" }} opts={{ renderer: "svg" }} />
+                                    </Box>
+                                    <Typography variant="body2" color="text.secondary" sx={{ minWidth: 0 }}>
+                                      {formatVolume(tank.currentVolumeLiters ?? tank.fuelVolumeLiters ?? tank.inventoryVolumeLiters ?? 0)} left
+                                    </Typography>
+                                  </Stack>
+                                ) : (
+                                  <>
+                                    <Box sx={{ height: 120 }}>
+                                      <ReactECharts option={buildTankGaugeOption(tank.fillPercent ?? tank.currentFillPercent ?? 0)} style={{ height: "100%", width: "100%" }} opts={{ renderer: "svg" }} />
+                                    </Box>
+                                    <Typography variant="body2" color="text.secondary">
+                                      {formatVolume(tank.currentVolumeLiters ?? tank.fuelVolumeLiters ?? tank.inventoryVolumeLiters ?? 0)} left
+                                    </Typography>
+                                  </>
+                                )}
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      ))}
+                    </Grid>
+                  ) : (
+                    <Typography color="text.secondary">No tank assets loaded for this site.</Typography>
+                  )}
+                  {tankPreview.length && tankCount > tankPreview.length ? (
+                        <Typography variant="caption" color="text.secondary">+{tankCount - tankPreview.length} more tanks</Typography>
+                  ) : null}
+                </Stack>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent>
+                <Stack spacing={1.5}>
+                  <Typography variant="h6">Transaction Pulse</Typography>
+                  {transactionKpis ? (
+                    <Grid container spacing={1.5}>
+                      <Grid size={{ xs: 12 }}>
+                        <Typography variant="caption" color="text.secondary">Transactions</Typography>
+                        <Typography variant="h5">{formatCount(transactionKpis.totalTransactions)}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Sales</Typography>
+                        <Typography variant="h6">{formatMoney(transactionKpis.totalSales)}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Gallons</Typography>
+                        <Typography variant="h6">{Number(transactionKpis.totalGallons || 0).toFixed(1)}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Completion</Typography>
+                        <Typography variant="h6">{formatPercent(transactionKpis.completionRate)}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Avg Ticket</Typography>
+                        <Typography variant="h6">{formatMoney(transactionKpis.averageTicket)}</Typography>
+                      </Grid>
+                    </Grid>
+                  ) : (
+                    <Typography color="text.secondary">No transaction summary is available for this site yet.</Typography>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          </>
+        )}
+      </Stack>
+    );
+  }
+
+  if (isMobile) {
+    return (
+      <>
+        <Stack spacing={2.5}>
+          {error ? <Alert severity="error">{error}</Alert> : null}
+
+        {mobileView === "map" ? (
+          <>
+            <Grid container spacing={1.5}>
+              <Grid size={{ xs: 6 }}>
+                <SummaryCard
+                  icon={<FlashOnIcon sx={{ color: "#d14343" }} />}
+                  label="Critical"
+                  value={renderAlertSiteMetric(totals.critical, affectedSiteCounts.critical)}
+                  tone="critical"
+                  caption="alerts / sites"
+                  onClick={() => openMobileSiteList(FILTERS.critical)}
+                  active={filter === FILTERS.critical}
+                />
+              </Grid>
+              <Grid size={{ xs: 6 }}>
+                <SummaryCard
+                  icon={<WarningAmberIcon sx={{ color: "#c77700" }} />}
+                  label="Warning"
+                  value={renderAlertSiteMetric(totals.warning, affectedSiteCounts.warning)}
+                  tone="warning"
+                  caption="alerts / sites"
+                  onClick={() => openMobileSiteList(FILTERS.warning)}
+                  active={filter === FILTERS.warning}
+                />
+              </Grid>
+            </Grid>
+
+            <Button variant="outlined" fullWidth onClick={() => openMobileSiteList(FILTERS.all)}>
+              View All Sites
+            </Button>
+
+            <Card sx={{ overflow: "hidden" }}>
+              <CardContent sx={{ p: 0 }}>
+                <Box sx={{ p: 2 }}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                    <div>
+                      <Typography variant="h6">Site Map</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Tap a marker to focus an affected site.
+                      </Typography>
+                    </div>
+                    <Chip size="small" label={`${filteredSites.length} sites`} />
+                  </Stack>
+                </Box>
+                <Box sx={{ height: 420, borderTop: "1px solid rgba(15, 23, 42, 0.08)" }}>
+                  <SiteMap
+                    sites={sites}
+                    selectedSiteId={selectedSiteId}
+                    onSelect={(site) => {
+                      setSelectedSiteId(site.id);
+                      setFilter(FILTERS.all);
+                      setMobileView("detail");
+                    }}
+                  />
+                </Box>
+              </CardContent>
+            </Card>
+
+            {selectedSite ? (
+              <Card>
+                <CardContent>
+                  <Stack spacing={1.25}>
+                    <Typography variant="overline" color="text.secondary">
+                      Selected Site
+                    </Typography>
+                    <Typography variant="h6">{selectedSite.name}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {[selectedSite.siteCode, selectedSite.region || "Unassigned"].filter(Boolean).join(" · ")}
+                    </Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      <AlertBadge type="critical" count={selectedSite.criticalCount || 0} onClick={() => openAlertsDialog(selectedSite, "critical")} />
+                      <AlertBadge type="warning" count={selectedSite.warnCount || 0} onClick={() => openAlertsDialog(selectedSite, "warning")} />
+                    </Stack>
+                    <Button variant="contained" onClick={() => setMobileView("detail")}>
+                      Open Site Preview
+                    </Button>
+                  </Stack>
+                </CardContent>
+              </Card>
+            ) : null}
+          </>
+        ) : mobileView === "detail" ? (
+          renderSitePreview(true)
+        ) : (
+          <Stack spacing={2}>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Button variant={filter === FILTERS.all ? "contained" : "outlined"} onClick={() => setFilter(FILTERS.all)}>
+                All
+              </Button>
+              <Button color="error" variant={filter === FILTERS.critical ? "contained" : "outlined"} onClick={() => setFilter(FILTERS.critical)}>
+                Critical
+              </Button>
+              <Button color="warning" variant={filter === FILTERS.warning ? "contained" : "outlined"} onClick={() => setFilter(FILTERS.warning)}>
+                Warning
+              </Button>
+            </Stack>
+
+            <Stack spacing={1.5}>
+              {mobileSites.map((site) => {
+                const health = siteHealth(site);
+                return (
+                  <Card
+                    key={site.id}
+                    variant="outlined"
+                    sx={{
+                      borderColor: selectedSiteId === site.id ? "primary.main" : "divider",
+                      borderWidth: selectedSiteId === site.id ? 2 : 1
+                    }}
+                  >
+                    <CardActionArea onClick={() => {
+                      setSelectedSiteId(site.id);
+                      setMobileView("detail");
+                    }}>
+                      <CardContent>
+                        <Stack spacing={1.25}>
+                          <Stack direction="row" justifyContent="space-between" spacing={1}>
+                            <div>
+                              <Typography fontWeight={700}>{site.name}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {[site.siteCode, site.region || "Unassigned"].filter(Boolean).join(" · ")}
+                              </Typography>
+                            </div>
+                            <Stack direction="row" spacing={0.75}>
+                              <AlertBadge type="critical" count={site.criticalCount || 0} onClick={(event) => { event.stopPropagation(); openAlertsDialog(site, "critical"); }} />
+                              <AlertBadge type="warning" count={site.warnCount || 0} onClick={(event) => { event.stopPropagation(); openAlertsDialog(site, "warning"); }} />
+                            </Stack>
+                          </Stack>
+                          <Typography variant="body2" color="text.secondary">
+                            {[site.address, site.postalCode].filter(Boolean).join(" ") || "No address"}
+                          </Typography>
+                          <Stack spacing={0.5}>
+                            <Stack direction="row" justifyContent="space-between">
+                              <Typography variant="body2">Pump Health</Typography>
+                              <Typography variant="body2">{formatPercent(health)}</Typography>
+                            </Stack>
+                            <LinearProgress variant="determinate" value={Math.max(0, Math.min(100, health * 100))} color={statusColor(health)} sx={{ height: 10, borderRadius: 999 }} />
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            ATG last seen: {formatDateTime(site.atgLastSeenAt)}
+                          </Typography>
+                        </Stack>
+                      </CardContent>
+                    </CardActionArea>
+                  </Card>
+                );
+              })}
+              {!mobileSites.length ? (
+                <Alert severity="info">No sites match the current alert filter.</Alert>
+              ) : null}
+            </Stack>
+          </Stack>
+          )}
+        </Stack>
+        <SiteAlertsDialog
+          open={alertsDialog.open}
+          onClose={() => setAlertsDialog({ open: false, severity: "", siteId: "", siteName: "" })}
+          siteId={alertsDialog.siteId}
+          siteName={alertsDialog.siteName}
+          severity={alertsDialog.severity}
+        />
+      </>
+    );
   }
 
   return (
@@ -293,11 +828,11 @@ export function DashboardPage() {
       <Grid container spacing={2.5}>
         <Grid size={{ xs: 12, sm: 6, xl: 3 }}>
           <SummaryCard
-            icon={<WarningAmberIcon color="error" />}
+            icon={<FlashOnIcon sx={{ color: "#d14343" }} />}
             label="Critical Alerts"
-            value={totals.critical}
+            value={renderAlertSiteMetric(totals.critical, affectedSiteCounts.critical)}
             tone="critical"
-            caption="Raised critical events across visible sites"
+            caption="alerts / sites"
             onClick={() => {
               setFilter(FILTERS.critical);
               setSelectedSiteId("");
@@ -307,11 +842,11 @@ export function DashboardPage() {
         </Grid>
         <Grid size={{ xs: 12, sm: 6, xl: 3 }}>
           <SummaryCard
-            icon={<WarningAmberIcon color="warning" />}
+            icon={<WarningAmberIcon sx={{ color: "#c77700" }} />}
             label="Warning Alerts"
-            value={totals.warning}
+            value={renderAlertSiteMetric(totals.warning, affectedSiteCounts.warning)}
             tone="warning"
-            caption="Raised warning events across visible sites"
+            caption="alerts / sites"
             onClick={() => {
               setFilter(FILTERS.warning);
               setSelectedSiteId("");
@@ -491,39 +1026,7 @@ export function DashboardPage() {
 
         <Grid size={{ xs: 12, xl: 4 }}>
           <Stack spacing={2.5}>
-            <Card>
-              <CardContent>
-                <Stack spacing={1.5}>
-                  <Typography variant="h6">Focused Site</Typography>
-                  {selectedSite ? (
-                    <>
-                      <Typography variant="h5">{selectedSite.name}</Typography>
-                      <Typography color="text.secondary">{selectedSite.siteCode} · {selectedSite.region || "Unassigned"}</Typography>
-                      <Divider />
-                      <Typography variant="body2">Address: {[selectedSite.address, selectedSite.postalCode].filter(Boolean).join(" ") || "No address"}</Typography>
-                      <Typography variant="body2">Critical alerts: {selectedSite.criticalCount || 0}</Typography>
-                      <Typography variant="body2">Warning alerts: {selectedSite.warnCount || 0}</Typography>
-                      <Typography variant="body2">Pump sides: {selectedSite.pumpSidesConnected || 0}/{selectedSite.pumpSidesExpected || 0}</Typography>
-                      <Typography variant="body2">ATG last seen: {formatDateTime(selectedSite.atgLastSeenAt)}</Typography>
-                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                        <Chip color="error" variant="outlined" label={`Critical ${selectedSite.criticalCount || 0}`} />
-                        <Chip color="warning" variant="outlined" label={`Warn ${selectedSite.warnCount || 0}`} />
-                        <Chip color={statusColor(siteHealth(selectedSite))} variant="outlined" label={`Connectivity ${formatPercent(siteHealth(selectedSite))}`} />
-                      </Stack>
-                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                        <Button size="small" variant="outlined">Open Site Detail</Button>
-                        <Button size="small" variant="outlined">Open Layout</Button>
-                        <Button size="small" variant="contained">Open Alerts</Button>
-                      </Stack>
-                    </>
-                  ) : (
-                    <Typography color="text.secondary">
-                      Select a site from the table to populate the detail panel.
-                    </Typography>
-                  )}
-                </Stack>
-              </CardContent>
-            </Card>
+            {renderSitePreview(false)}
 
             <Card>
               <CardContent>
@@ -771,6 +1274,13 @@ export function DashboardPage() {
           </Stack>
         </CardContent>
       </Card>
+      <SiteAlertsDialog
+        open={alertsDialog.open}
+        onClose={() => setAlertsDialog({ open: false, severity: "", siteId: "", siteName: "" })}
+        siteId={alertsDialog.siteId}
+        siteName={alertsDialog.siteName}
+        severity={alertsDialog.severity}
+      />
     </Stack>
   );
 }

@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const TOKEN_STORAGE_KEY = "petroleum.mui.auth.token";
 const LEGACY_TOKEN_STORAGE_KEY = "petroleum.auth.token";
 
@@ -20,6 +20,11 @@ function setToken(nextToken) {
   }
 }
 
+function buildApiUrl(path) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return API_BASE ? `${API_BASE}${normalizedPath}` : normalizedPath;
+}
+
 export function getApiBase() {
   return API_BASE;
 }
@@ -37,7 +42,7 @@ export function completeOAuthLogin(nextToken) {
 }
 
 export async function loginWithPassword(email, password) {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  const res = await fetch(buildApiUrl("/auth/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password })
@@ -52,14 +57,14 @@ export async function loginWithPassword(email, password) {
 }
 
 export async function getOAuthProviders() {
-  const res = await fetch(`${API_BASE}/auth/oauth/providers`);
+  const res = await fetch(buildApiUrl("/auth/oauth/providers"));
   if (!res.ok) throw new Error("Unable to load OAuth providers");
   return res.json();
 }
 
 export function oauthStartUrl(provider) {
   const redirectTo = `${window.location.origin}/auth/callback`;
-  const url = new URL(`${API_BASE}/auth/oauth/${provider}/start`);
+  const url = new URL(buildApiUrl(`/auth/oauth/${provider}/start`), window.location.origin);
   url.searchParams.set("redirectTo", redirectTo);
   return url.toString();
 }
@@ -70,7 +75,7 @@ async function request(path, options = {}) {
     ...(options.headers || {})
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const response = await fetch(buildApiUrl(path), { ...options, headers });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`${response.status}: ${text}`);
@@ -81,6 +86,10 @@ async function request(path, options = {}) {
 export const api = {
   getSessionUser: () => request("/auth/me"),
   getCurrentJobber: () => request("/jobber"),
+  getAlerts: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return request(`/alerts${query ? `?${query}` : ""}`);
+  },
   getJobberEiaCredentialsStatus: () => request("/jobber/eia-credentials"),
   saveJobberEiaCredentials: (payload) =>
     request("/jobber/eia-credentials", {
@@ -143,7 +152,7 @@ export const api = {
   },
   getAlliedTransactionsExportUrl: (siteId, params = {}) => {
     const query = new URLSearchParams(params).toString();
-    return `${API_BASE}/sites/${siteId}/allied-transactions/export${query ? `?${query}` : ""}`;
+    return buildApiUrl(`/sites/${siteId}/allied-transactions/export${query ? `?${query}` : ""}`);
   },
   getPricingSnapshot: () => request("/market/pricing"),
   getOpisSnapshot: (params = {}) => {
