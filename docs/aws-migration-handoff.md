@@ -8,11 +8,10 @@ This document describes the recommended AWS target architecture and the cutover 
 - API: AWS App Runner
 - Database: Amazon RDS for PostgreSQL
 - Secrets: AWS Secrets Manager
-- Background worker: Amazon ECS Fargate with EventBridge Scheduler if `apps/worker` is still needed in production
 
 This maps cleanly to the current repository structure:
 
-- `apps/web` is a Vite SPA and is a good fit for Amplify Hosting
+- `apps/web-mui` is the current Vite SPA frontend and is a good fit for Amplify Hosting
 - `apps/api` is a simple Node.js + Express service and is a good fit for App Runner
 - PostgreSQL is already the system of record, so RDS PostgreSQL is the natural replacement
 
@@ -86,7 +85,7 @@ Recommended `amplify.yml`:
 ```yaml
 version: 1
 applications:
-  - appRoot: apps/web
+  - appRoot: apps/web-mui
     frontend:
       phases:
         preBuild:
@@ -94,9 +93,9 @@ applications:
             - npm install
         build:
           commands:
-            - npm --workspace apps/web run build
+            - npm --workspace apps/web-mui run build
       artifacts:
-        baseDirectory: apps/web/dist
+        baseDirectory: apps/web-mui/dist
         files:
           - '**/*'
       cache:
@@ -270,17 +269,6 @@ Recommended order:
 7. Re-run smoke tests immediately after DNS cutover.
 8. Keep the old environment available for rollback for at least 24 to 48 hours.
 
-## Optional Worker Migration
-
-If `apps/worker` is required in production:
-
-- containerize it
-- run it on ECS Fargate
-- use EventBridge Scheduler if it should run on a schedule
-- use a long-lived ECS service if it should run continuously
-
-This worker does not need to block the initial web + API migration unless the production workflow depends on it.
-
 ## Suggested Handoff Sequence For The Next Engineer
 
 1. Create AWS networking and RDS.
@@ -300,5 +288,3 @@ This worker does not need to block the initial web + API migration unless the pr
 - App Runner VPC access: `https://docs.aws.amazon.com/apprunner/latest/dg/network-vpc.html`
 - App Runner environment variables and secrets: `https://docs.aws.amazon.com/apprunner/latest/dg/env-variable.html`
 - RDS security groups: `https://docs.aws.amazon.com/AmazonRDS/latest/gettingstartedguide/security-groups.html`
-- EventBridge Scheduler: `https://docs.aws.amazon.com/eventbridge/latest/userguide/using-eventbridge-scheduler.html`
-- ECS scheduled tasks: `https://docs.aws.amazon.com/AmazonECS/latest/developerguide/tasks-scheduled-eventbridge-scheduler.html`

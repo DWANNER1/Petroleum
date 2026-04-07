@@ -1,6 +1,6 @@
 [build]
-  command = "npm install && npm --workspace apps/web run build"
-  publish = "apps/web/dist"
+  command = "npm install && npm --workspace apps/web-mui run build"
+  publish = "apps/web-mui/dist"
 
 [[redirects]]
   from = "/*"

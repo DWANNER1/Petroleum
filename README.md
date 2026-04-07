@@ -8,9 +8,9 @@ MVP scaffold for a multi-site gas station monitoring platform based on:
 
 ## Stack
 
-- `apps/web`: React + Vite dashboard
+- `apps/web-mui`: React + Vite + MUI dashboard
 - `apps/api`: Node.js + Express API + SSE + PostgreSQL
-- `apps/worker`: Node.js simulator worker (local/dev)
+- `apps/web`: legacy frontend source retained temporarily while pricing pages are fully migrated into `apps/web-mui`
 
 ## Database
 
@@ -52,7 +52,7 @@ npm.cmd run seed
 
 This also seeds deterministic Allied controller transaction test data into `allied_transactions`.
 
-4. Start all apps locally:
+4. Start the local app stack:
 
 ```powershell
 $env:DATABASE_URL='postgres://postgres:postgres@localhost:5432/petroleum'
@@ -94,13 +94,30 @@ Notes:
 - `apps/api/src/applyWorkbookPricingTestData.js` seeds deterministic pricing snapshots, rules, customer profiles, and taxes.
 - The workbook values are already embedded in the seed script, so another developer does not need your local `C:\Users\deepa\Downloads\Updated CostCalculator_.xlsx` file to run the seed.
 - If needed, `PRICING_WORKBOOK_PATH` can still be set to document which workbook the values came from in logs and seeded notes.
+- The workbook seed does not provide the live starting basis for `Price Run`. Starting basis values now come from live OPIS APIs during preview and generate.
+
+### Live Price Run Basis
+
+`Price Run` now uses live-only basis inputs for the three active products:
+
+- `REG 87`: OPIS Spot API product code `O1007NR` (`OPIS San Francisco CARB RFG Regular Gasoline Prompt Average`)
+- `PRE 91`: OPIS Spot API product code `O1007NW` (`OPIS San Francisco CARB RFG Premium Gasoline Prompt Average`)
+- `Diesel`: OPIS Spot API product code `O1007G4` (`OPIS San Francisco CARB Diesel Prompt Average`)
+
+The API refreshes both basis feeds before `Preview` and `Generate`:
+
+- Spot basis: latest available OPIS Spot API values from `GET /api/SpotValues` with `retrieveLatestData=true`
+- Rack basis: first available OPIS Rack API supplier rows after `6:00 AM ET` from the configured timing preference
+
+The pricing engine does not fall back to workbook/demo spot or rack rows anymore. If live spot or rack inputs are missing, the run shows missing-input errors instead of inventing a price.
 
 Mandatory verification before sign-off:
 
-- Do not report work as complete until both local services are verified as reachable.
+- Do not report work as complete until every local service relevant to the task is verified as reachable.
 - Check that the web host returns successfully on `http://localhost:5173`.
 - Check that the API returns successfully on `http://localhost:4000`.
 - After the final restart, re-check the actual running services rather than relying on an earlier result.
+- Before the final handoff message, explicitly list which ports were checked at the end of the task and what each one returned.
 - If login, pricing, Allied, or any other page depends on the API, verify the API is actually running before concluding the feature is working.
 - If you add or change an API route, probe that route directly and confirm it does not return `Cannot GET ...`.
 - In any status update or handoff, explicitly state whether the web and API ports were checked and what they returned.
@@ -151,10 +168,11 @@ Services:
 
 Mandatory verification before sign-off:
 
-- Do not report work as complete until both local services are verified as reachable.
+- Do not report work as complete until every local service relevant to the task is verified as reachable.
 - Check that the web host returns successfully on `http://localhost:5173`.
 - Check that the API returns successfully on `http://localhost:4000`.
 - After the final restart, re-check the actual running services rather than relying on an earlier result.
+- Before the final handoff message, explicitly list which ports were checked at the end of the task and what each one returned.
 - If login, pricing, Allied, or any other page depends on the API, verify the API is actually running before concluding the feature is working.
 - If you add or change an API route, probe that route directly and confirm it does not return `Cannot GET ...`.
 - In any status update or handoff, explicitly state whether the web and API ports were checked and what they returned.
@@ -203,8 +221,8 @@ This section documents the previous free-hosting path kept in the repo via `netl
 1. In Netlify, import this repository.
 2. Build settings:
    - Base directory: *(leave empty)*
-   - Build command: `npm install && npm --workspace apps/web run build`
-   - Publish directory: `apps/web/dist`
+   - Build command: `npm install && npm --workspace apps/web-mui run build`
+   - Publish directory: `apps/web-mui/dist`
 3. Add environment variable:
    - `VITE_API_BASE_URL` = your Railway API URL
 4. Deploy site.
