@@ -675,7 +675,78 @@ function basisTraceItem(trace) {
   return (trace || []).find((item) => Number.isFinite(item?.spotValue) || Number.isFinite(item?.rackValue)) || null;
 }
 
-function skeletonOutputs(profile, taxesByFamily, ruleEvaluations) {
+function productKeyForFamily(family) {
+  if (family === "regular") return "reg_87_carb";
+  if (family === "mid") return "mid_89_carb";
+  if (family === "premium") return "premium_91_carb";
+  if (family === "diesel") return "diesel_carb_ulsd";
+  return "";
+}
+
+function fallbackBasisData({ family, profile, sourceValues, activeRule }) {
+  const productKey = productKeyForFamily(family);
+  if (!productKey || !profile) return null;
+  const resolved = bestSpotOrRackValue(
+    sourceValues,
+    activeRule?.vendorSets || [],
+    {
+      sourceKind: "spot_or_rack_best",
+      sourceRef: `marketKey=$profile.marketKey|terminalKey=$profile.terminalKey|productKey=${productKey}|quoteCode=OPIS_SPOT_API`,
+      metadata: {
+        marketKey: "$profile.marketKey",
+        terminalKey: "$profile.terminalKey",
+        productKey,
+        rackProductKey: productKey,
+        rackMarketKey: "$profile.marketKey",
+        rackTerminalKey: "$profile.terminalKey"
+      }
+    },
+    family,
+    profile
+  );
+  if (!Number.isFinite(resolved.value) && !Number.isFinite(resolved.spotValue) && !Number.isFinite(resolved.rackValue)) {
+    return null;
+  }
+  const matchedInfo = sourceObservedInfo(resolved.matchedValue || null);
+  const spotInfo = sourceObservedInfo(resolved.spotMatchedValue || null);
+  const rackInfo = sourceObservedInfo(resolved.rackMatchedValue || null);
+  return {
+    kind: "derived_basis",
+    label: "Spot or Rack",
+    sourceKind: "spot_or_rack_best",
+    sourceRef: `productKey=${productKey}`,
+    rawValue: Number.isFinite(resolved.value) ? resolved.value : null,
+    multiplier: 1,
+    contribution: Number.isFinite(resolved.value) ? resolved.value : null,
+    detail: resolved.detail,
+    recommendation: resolved.recommendation || null,
+    spotValue: Number.isFinite(resolved.spotValue) ? resolved.spotValue : null,
+    rackValue: Number.isFinite(resolved.rackValue) ? resolved.rackValue : null,
+    marketKey: resolved.marketKey || profile?.rules?.marketKey || null,
+    terminalKey: resolved.terminalKey || profile?.rules?.terminalKey || null,
+    matchedValueId: resolved.matchedValueId || null,
+    matchedObservedAt: matchedInfo.observedAt,
+    matchedTimingLabel: matchedInfo.timingLabel,
+    spotObservedAt: spotInfo.observedAt,
+    spotTimingLabel: spotInfo.timingLabel,
+    spotSourceCity: spotInfo.sourceCity,
+    spotSourceSupplier: spotInfo.sourceSupplier,
+    spotFetchedAt: spotInfo.fetchedAt,
+    spotSourceEndpoint: spotInfo.sourceEndpoint,
+    spotSourceMode: spotInfo.sourceMode,
+    spotPublishedDate: spotInfo.publishedDate,
+    rackObservedAt: rackInfo.observedAt,
+    rackTimingLabel: rackInfo.timingLabel,
+    rackSourceCity: rackInfo.sourceCity,
+    rackSourceSupplier: rackInfo.sourceSupplier,
+    rackFetchedAt: rackInfo.fetchedAt,
+    rackSourceEndpoint: rackInfo.sourceEndpoint,
+    rackSourceMode: rackInfo.sourceMode,
+    rackPublishedDate: rackInfo.publishedDate
+  };
+}
+
+function skeletonOutputs(profile, taxesByFamily, ruleEvaluations, sourceValues, activeRulesByFamily) {
   const gasFreight = profile?.freightCostGas ?? null;
   const dieselFreight = profile?.freightCostDiesel ?? null;
   const outputs = [];
@@ -734,6 +805,17 @@ function skeletonOutputs(profile, taxesByFamily, ruleEvaluations) {
         }
       ]
     };
+    if (!basisTraceItem(output.trace)) {
+      const fallbackBasis = fallbackBasisData({
+        family,
+        profile,
+        sourceValues,
+        activeRule: activeRulesByFamily?.[family] || null
+      });
+      if (fallbackBasis) {
+        output.trace.unshift(fallbackBasis);
+      }
+    }
     const landedCost = computeLandedCostBreakdown({ family, output, profile });
     if (landedCost) {
       output.todayCost = landedCost.todayCost;
@@ -834,8 +916,10 @@ async function evaluateCustomerPricing({ jobberId, customerId, pricingDate }) {
 
   const taxesByFamily = taxMapForSchedules(taxSchedules);
   const ruleEvaluations = {};
+  const activeRulesByFamily = {};
   for (const ruleSet of activeRules) {
     if (!ruleSet) continue;
+    activeRulesByFamily[ruleSet.productFamily] = ruleSet;
     ruleEvaluations[ruleSet.productFamily] = evaluateRuleSet({
       ruleSet,
       productFamily: ruleSet.productFamily,
@@ -898,7 +982,7 @@ async function evaluateCustomerPricing({ jobberId, customerId, pricingDate }) {
     })),
     taxesByFamily,
     missingInputs,
-    outputs: skeletonOutputs(profile, taxesByFamily, ruleEvaluations),
+    outputs: skeletonOutputs(profile, taxesByFamily, ruleEvaluations, sourceValues, activeRulesByFamily),
     trace: {
       notes: [
         "This is the pricing-engine skeleton. It now evaluates configured rule components against source values, taxes, customer profile values, constants, and lowest-of vendor sets.",
