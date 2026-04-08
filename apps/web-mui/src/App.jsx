@@ -65,10 +65,21 @@ function PageShell({ user, jobber, onLogout, children }) {
   const drawerContent = (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <Box sx={{ p: 3 }}>
-        <Typography variant="h6">Petroleum MUI</Typography>
-        <Typography variant="body2" color="text.secondary">
-          Primary responsive frontend
-        </Typography>
+        {jobber?.logoUrl ? (
+          <Box
+            component="img"
+            src={jobber.logoUrl}
+            alt={jobber?.name || "Jobber logo"}
+            sx={{ display: "block", maxWidth: "100%", maxHeight: 56, objectFit: "contain" }}
+          />
+        ) : (
+          <>
+            <Typography variant="h6">Petroleum MUI</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Primary responsive frontend
+            </Typography>
+          </>
+        )}
       </Box>
       <Divider />
       <List sx={{ px: 1.5, py: 2, flex: 1 }}>
@@ -128,10 +139,26 @@ function PageShell({ user, jobber, onLogout, children }) {
             <MenuIcon />
           </IconButton>
           <Box sx={{ flex: 1 }}>
-            <Typography variant="h6">{title}</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Responsive rebuild track for desktop and phone
-            </Typography>
+            {jobber?.logoUrl ? (
+              <Stack spacing={0.5}>
+                <Box
+                  component="img"
+                  src={jobber.logoUrl}
+                  alt={jobber?.name || "Jobber logo"}
+                  sx={{ display: "block", maxWidth: { xs: 160, sm: 220 }, maxHeight: 40, objectFit: "contain" }}
+                />
+                <Typography variant="body2" color="text.secondary">
+                  {title}
+                </Typography>
+              </Stack>
+            ) : (
+              <>
+                <Typography variant="h6">Petroleum MUI</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {title}
+                </Typography>
+              </>
+            )}
           </Box>
           <Chip
             color="primary"

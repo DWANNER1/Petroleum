@@ -18,6 +18,8 @@ export default defineConfig({
     proxy: {
       "/auth": "http://127.0.0.1:4000",
       "/alerts": "http://127.0.0.1:4000",
+      "/customers": "http://127.0.0.1:4000",
+      "/pricing": "http://127.0.0.1:4000",
       "/jobber": "http://127.0.0.1:4000",
       "/management": "http://127.0.0.1:4000",
       "/sites": "http://127.0.0.1:4000",

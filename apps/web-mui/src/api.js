@@ -80,7 +80,19 @@ async function request(path, options = {}) {
     const text = await response.text();
     throw new Error(`${response.status}: ${text}`);
   }
-  return response.json();
+  if (response.status === 204) return null;
+  const text = await response.text();
+  if (!text) return null;
+  return JSON.parse(text);
+}
+
+function normalizeCredentialStatus(payload) {
+  const configured = Boolean(payload?.saved ?? payload?.configured);
+  return {
+    ...payload,
+    saved: configured,
+    configured
+  };
 }
 
 export const api = {
@@ -90,18 +102,18 @@ export const api = {
     const query = new URLSearchParams(params).toString();
     return request(`/alerts${query ? `?${query}` : ""}`);
   },
-  getJobberEiaCredentialsStatus: () => request("/jobber/eia-credentials"),
+  getJobberEiaCredentialsStatus: async () => normalizeCredentialStatus(await request("/jobber/eia-credentials")),
   saveJobberEiaCredentials: (payload) =>
     request("/jobber/eia-credentials", {
       method: "PUT",
       body: JSON.stringify(payload)
-    }),
-  getJobberOpisCredentialsStatus: () => request("/jobber/opis-credentials"),
+    }).then(normalizeCredentialStatus),
+  getJobberOpisCredentialsStatus: async () => normalizeCredentialStatus(await request("/jobber/opis-credentials")),
   saveJobberOpisCredentials: (payload) =>
     request("/jobber/opis-credentials", {
       method: "PUT",
       body: JSON.stringify(payload)
-    }),
+    }).then(normalizeCredentialStatus),
   getJobberPricingConfigs: () => request("/jobber/pricing-configs"),
   saveJobberPricingConfig: (payload) =>
     request("/jobber/pricing-configs", {
@@ -127,6 +139,57 @@ export const api = {
   deleteManagedUser: (userId) =>
     request(`/management/users/${userId}`, {
       method: "DELETE"
+    }),
+  getCustomers: () => request("/customers"),
+  createCustomer: (payload) =>
+    request("/customers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  getCustomer: (customerId) => request(`/customers/${customerId}`),
+  updateCustomer: (customerId, payload) =>
+    request(`/customers/${customerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  deleteCustomer: (customerId) =>
+    request(`/customers/${customerId}`, {
+      method: "DELETE"
+    }),
+  getCustomerPricingProfile: (customerId) => request(`/customers/${customerId}/pricing-profile`),
+  saveCustomerPricingProfile: (customerId, payload) =>
+    request(`/customers/${customerId}/pricing-profile`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
+  getPricingRules: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return request(`/pricing/rules${query ? `?${query}` : ""}`);
+  },
+  createPricingRule: (payload) =>
+    request("/pricing/rules", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  getPricingRule: (ruleId) => request(`/pricing/rules/${ruleId}`),
+  updatePricingRule: (ruleId, payload) =>
+    request(`/pricing/rules/${ruleId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  deletePricingRule: (ruleId) =>
+    request(`/pricing/rules/${ruleId}`, {
+      method: "DELETE"
+    }),
+  savePricingRuleComponents: (ruleId, components) =>
+    request(`/pricing/rules/${ruleId}/components`, {
+      method: "PUT",
+      body: JSON.stringify({ components })
+    }),
+  savePricingRuleVendorSets: (ruleId, vendorSets) =>
+    request(`/pricing/rules/${ruleId}/vendor-sets`, {
+      method: "PUT",
+      body: JSON.stringify({ vendorSets })
     }),
   getSites: () => request("/sites"),
   getSite: (siteId) => request(`/sites/${siteId}`),

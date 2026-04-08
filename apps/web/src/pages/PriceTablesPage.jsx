@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 
 const PRODUCT_FAMILIES = ["regular", "mid", "premium", "diesel"];
+const VISIBLE_PRODUCT_FAMILIES = ["regular", "premium", "diesel"];
 const CUSTOMER_STATUS_OPTIONS = [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }];
 const PRICING_BRANCH_OPTIONS = [{ value: "unbranded", label: "Unbranded" }, { value: "branded", label: "Branded" }, { value: "spot", label: "Spot" }, { value: "rack", label: "Rack" }];
-const MARKET_KEY_OPTIONS = [{ value: "san_francisco", label: "San Francisco" }, { value: "benicia", label: "Benicia" }, { value: "sacramento", label: "Sacramento" }, { value: "san_jose", label: "San Jose" }, { value: "stockton", label: "Stockton" }, { value: "bay_area", label: "Bay Area" }];
-const TERMINAL_KEY_OPTIONS = [{ value: "benicia_terminal", label: "Benicia" }, { value: "stockton_terminal", label: "Stockton" }, { value: "sacramento_terminal", label: "Sacramento" }, { value: "san_jose_terminal", label: "San Jose" }, { value: "san_francisco_terminal", label: "San Francisco" }];
+const MARKET_KEY_OPTIONS = [{ value: "san_francisco", label: "San Francisco" }, { value: "benicia", label: "Benicia (Concord rack)" }, { value: "sacramento", label: "Sacramento" }, { value: "san_jose", label: "San Jose" }, { value: "stockton", label: "Stockton" }, { value: "bay_area", label: "Bay Area" }];
+const TERMINAL_KEY_OPTIONS = [{ value: "benicia_terminal", label: "Benicia / Concord" }, { value: "stockton_terminal", label: "Stockton" }, { value: "sacramento_terminal", label: "Sacramento" }, { value: "san_jose_terminal", label: "San Jose" }, { value: "san_francisco_terminal", label: "San Francisco" }];
 const PRODUCT_KEY_OPTIONS = [{ value: "reg_87_carb", label: "87 CARB" }, { value: "mid_89_carb", label: "89 CARB" }, { value: "premium_91_carb", label: "91 CARB" }, { value: "diesel_carb_ulsd", label: "CARB ULSD" }, { value: "diesel_red", label: "Red Diesel" }, { value: "ethanol", label: "Ethanol" }, { value: "rin", label: "RIN" }, { value: "lcfs_gasoline", label: "LCFS Gasoline" }, { value: "lcfs_diesel", label: "LCFS Diesel" }, { value: "ghg_gasoline", label: "GHG Gasoline" }, { value: "ghg_diesel", label: "GHG Diesel" }];
 const VENDOR_KEY_OPTIONS = [{ value: "valero", label: "Valero" }, { value: "psx", label: "Phillips 66" }, { value: "tesoro", label: "Tesoro" }, { value: "marathon", label: "Marathon" }, { value: "shell", label: "Shell" }, { value: "chevron", label: "Chevron" }, { value: "bp", label: "BP" }];
 const SOURCE_TYPE_OPTIONS = [{ value: "opis", label: "OPIS" }, { value: "branded_zone", label: "Branded Zone" }, { value: "branded_area", label: "Branded Area" }, { value: "tax", label: "Tax" }, { value: "manual_adjustment", label: "Manual Adjustment" }, { value: "derived", label: "Derived" }];
@@ -13,10 +14,11 @@ const SNAPSHOT_STATUS_OPTIONS = [{ value: "draft", label: "Draft" }, { value: "r
 const RULE_STATUS_OPTIONS = [{ value: "draft", label: "Draft" }, { value: "active", label: "Active" }, { value: "retired", label: "Retired" }];
 const DELIVERY_METHOD_OPTIONS = [{ value: "email", label: "Email" }, { value: "fax_email", label: "Fax Through Email" }, { value: "manual", label: "Manual" }];
 const VENDOR_SELECTION_MODE_OPTIONS = [{ value: "lowest", label: "Lowest" }, { value: "highest", label: "Highest" }, { value: "first_available", label: "First Available" }, { value: "specific_vendor", label: "Specific Vendor" }];
-const COMPONENT_SOURCE_KIND_OPTIONS = [{ value: "customer_profile", label: "customer_profile" }, { value: "source_value", label: "source_value" }, { value: "tax", label: "tax" }, { value: "tax_schedule", label: "tax_schedule" }, { value: "vendor_min", label: "vendor_min" }, { value: "constant", label: "constant" }, { value: "default", label: "default" }, { value: "derived_component", label: "derived_component" }];
+const COMPONENT_SOURCE_KIND_OPTIONS = [{ value: "customer_profile", label: "customer_profile" }, { value: "source_value", label: "source_value" }, { value: "tax", label: "tax" }, { value: "tax_schedule", label: "tax_schedule" }, { value: "vendor_min", label: "vendor_min" }, { value: "spot_or_rack_best", label: "spot_or_rack_best" }, { value: "constant", label: "constant" }, { value: "default", label: "default" }, { value: "derived_component", label: "derived_component" }];
 const TAX_NAME_OPTIONS = [{ value: "gas_tax", label: "Gas Tax" }, { value: "diesel_tax", label: "Diesel Tax" }];
 const EMPTY_CUSTOMER = { name: "", addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "", terminalKey: "", status: "active" };
-const EMPTY_PROFILE = { effectiveStart: "", effectiveEnd: "", freightMiles: "", freightCostGas: "", freightCostDiesel: "", rackMarginGas: "", rackMarginDiesel: "", discountRegular: "", discountMid: "", discountPremium: "", discountDiesel: "", branch: "unbranded", marketKey: "", terminalKey: "", extraRulesJson: "{}" };
+const PROFILE_RULE_FIELDS = ["distributionLabel", "gasPrepay", "dieselPrepay", "storageFee", "gasFedExcise", "gasStateExcise", "dieselFedExcise", "dieselStateExcise", "gasSalesTaxRate", "dieselSalesTaxRate", "gasRetailMargin", "dieselRetailMargin"];
+const EMPTY_PROFILE = { effectiveStart: "", effectiveEnd: "", freightMiles: "", freightCostGas: "", freightCostDiesel: "", rackMarginGas: "", rackMarginDiesel: "", discountRegular: "", discountMid: "", discountPremium: "", discountDiesel: "", branch: "unbranded", marketKey: "", terminalKey: "", distributionLabel: "", gasPrepay: "", dieselPrepay: "", storageFee: "", gasFedExcise: "", gasStateExcise: "", dieselFedExcise: "", dieselStateExcise: "", gasSalesTaxRate: "", dieselSalesTaxRate: "", gasRetailMargin: "", dieselRetailMargin: "", extraRulesJson: "{}" };
 const EMPTY_CONTACT = { id: "", name: "", email: "", phone: "", faxEmail: "", isPrimary: false, deliveryMethod: "email" };
 const EMPTY_RULE = { name: "", productFamily: "regular", effectiveStart: "", effectiveEnd: "", status: "draft", versionLabel: "", notes: "" };
 const EMPTY_COMPONENT = { componentKey: "", label: "", sourceKind: "customer_profile", sourceRef: "", defaultValue: "", multiplier: "1", sortOrder: "1", isEditable: true, metadataJson: "{}" };
@@ -28,12 +30,224 @@ const EMPTY_SOURCE_VALUE = { marketKey: "", terminalKey: "", productKey: "", ven
 function prettyJson(value) { return JSON.stringify(value, null, 2); }
 function formatMoney(value) { return value == null || Number.isNaN(Number(value)) ? "n/a" : `$${Number(value).toFixed(4)}`; }
 function formatDateTime(value) { return value ? new Date(value).toLocaleString() : "n/a"; }
+function formatPercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "n/a";
+  const percent = numeric <= 1 ? numeric * 100 : numeric;
+  return `${percent.toFixed(percent % 1 === 0 ? 0 : percent < 10 ? 3 : 2)}%`;
+}
+function isoDate(value) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    return value.trim();
+  }
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(value));
+}
+function todayDate() { return isoDate(new Date()); }
+function yesterdayDate() { const value = new Date(); value.setDate(value.getDate() - 1); return isoDate(value); }
+function productFamilyLabel(value) {
+  if (value === "regular") return "REG 87";
+  if (value === "premium") return "PRE 91";
+  if (value === "diesel") return "Diesel";
+  if (value === "mid") return "MID 89";
+  return value;
+}
+function traceAmount(item) { return item.contribution != null ? formatMoney(item.contribution) : item.value != null ? formatMoney(item.value) : "n/a"; }
+function basisTraceItem(output) {
+  return (output.trace || []).find((item) => Number.isFinite(item?.spotValue) || Number.isFinite(item?.rackValue)) || null;
+}
+function derivedBasisTotals(output) {
+  if (output?.basisComparison) {
+    return {
+      spotTotal: output.basisComparison.spotTotal,
+      rackTotal: output.basisComparison.rackTotal,
+      difference: output.basisComparison.difference
+    };
+  }
+  const basis = basisTraceItem(output);
+  if (!basis || !Number.isFinite(output?.totalPrice) || !Number.isFinite(basis.rawValue)) return null;
+  const current = Number(output.totalPrice);
+  const selectedBasis = Number(basis.rawValue);
+  const spotTotal = Number.isFinite(basis.spotValue) ? Number((current - selectedBasis + Number(basis.spotValue)).toFixed(4)) : null;
+  const rackTotal = Number.isFinite(basis.rackValue) ? Number((current - selectedBasis + Number(basis.rackValue)).toFixed(4)) : null;
+  const difference = spotTotal != null && rackTotal != null ? Number((spotTotal - rackTotal).toFixed(4)) : null;
+  return { spotTotal, rackTotal, difference };
+}
+function defaultTraceMode(output) {
+  const recommendation = String(basisTraceItem(output)?.recommendation || "").trim().toLowerCase();
+  return recommendation === "spot" ? "spot" : "rack";
+}
+function traceAmountForMode(item, mode) {
+  if ((mode === "spot" || mode === "rack") && Number.isFinite(item?.spotValue) && Number.isFinite(item?.rackValue)) {
+    return formatMoney(mode === "spot" ? item.spotValue : item.rackValue);
+  }
+  return traceAmount(item);
+}
+function traceDetailForMode(item, mode) {
+  if ((mode === "spot" || mode === "rack") && (Number.isFinite(item?.spotValue) || Number.isFinite(item?.rackValue))) {
+    const chosen = mode === "spot" ? item.spotValue : item.rackValue;
+    const alternate = mode === "spot" ? item.rackValue : item.spotValue;
+    const chosenLabel = mode === "spot" ? "Spot" : "Rack";
+    const alternateLabel = mode === "spot" ? "Rack" : "Spot";
+    return `${item.detail} | Using ${chosenLabel} ${formatMoney(chosen)}${Number.isFinite(alternate) ? ` | ${alternateLabel} ${formatMoney(alternate)}` : ""}`;
+  }
+  return item.detail;
+}
+function traceModeSummary(output, mode) {
+  const basis = basisTraceItem(output);
+  const derived = derivedBasisTotals(output);
+  if (!basis || (mode !== "spot" && mode !== "rack")) return "";
+  const derivedTotal = mode === "spot" ? derived?.spotTotal : derived?.rackTotal;
+  const chosenBasis = mode === "spot" ? basis.spotValue : basis.rackValue;
+  const profileTarget = basis.terminalKey || basis.marketKey || "selected profile";
+  return `${mode === "spot" ? "Derived Spot" : "Derived Rack"} recalculates the finished price with a ${mode} basis of ${formatMoney(chosenBasis)} for a total of ${formatMoney(derivedTotal)} using ${profileTarget}.`;
+}
+function formatBasisObserved(output, mode) {
+  const comparison = output?.basisComparison || {};
+  const observedAt = mode === "spot" ? comparison.spotObservedAt : comparison.rackObservedAt;
+  const timing = mode === "spot" ? comparison.spotTimingLabel : comparison.rackTimingLabel;
+  const city = mode === "spot" ? comparison.spotSourceCity : comparison.rackSourceCity;
+  const supplier = mode === "spot" ? comparison.spotSourceSupplier : comparison.rackSourceSupplier;
+  const pieces = [timing, city, supplier, observedAt ? formatDateTime(observedAt) : ""].filter(Boolean);
+  return pieces.join(" | ");
+}
+function spotProductCodeForFamily(family) {
+  if (family === "regular") return "O1007NR";
+  if (family === "premium") return "O1007NW";
+  if (family === "diesel") return "O1007G4";
+  return "";
+}
+function spotMarketReferenceForFamily(family) {
+  if (family === "regular") return "San Francisco CARB RFG Regular Average";
+  if (family === "premium") return "San Francisco CARB RFG Premium Average";
+  if (family === "diesel") return "San Francisco CARB Diesel Average";
+  return "OPIS market average";
+}
+function basisValidationLines(output, mode) {
+  const basis = basisTraceItem(output);
+  const comparison = output?.basisComparison || {};
+  const family = output?.productFamily || "";
+  if (!basis || (mode !== "spot" && mode !== "rack")) return [];
+  if (mode === "spot") {
+    const code = spotProductCodeForFamily(family);
+    const endpoint = comparison.spotSourceEndpoint || "GET /api/SpotValues";
+    const sourceMode = comparison.spotSourceMode === "intraday"
+      ? "Intraday spot"
+      : comparison.spotSourceMode === "latest_prompt_average"
+        ? "Latest published prompt average"
+        : "Spot price";
+    return [
+      `Source API: OPIS Spot API \u2192 ${endpoint}`,
+      `Selection rule: ${sourceMode} for ${productFamilyLabel(family)}`,
+      `Report match line: ${spotMarketReferenceForFamily(family)}`,
+      `Product code: ${code || "n/a"}`,
+      `Market: ${comparison.spotSourceCity || "San Francisco"}`,
+      `Timing label: ${comparison.spotTimingLabel || "Latest Spot"}`,
+      `Published date: ${comparison.spotPublishedDate ? formatDateTime(comparison.spotPublishedDate) : "n/a"}`,
+      `Fetched at: ${comparison.spotFetchedAt ? formatDateTime(comparison.spotFetchedAt) : "n/a"}`,
+      `Validation keys: market line, product code, and published date should all match the OPIS spot report`
+    ];
+  }
+  return [
+    `Source API: OPIS Rack API \u2192 GET /Summary`,
+    `Selection rule: first available unbranded net average after 6:00 AM ET`,
+    `Market: ${comparison.rackSourceCity || "n/a"}`,
+    `Supplier: ${comparison.rackSourceSupplier || "n/a"}`,
+    `Timing label: ${comparison.rackTimingLabel || "n/a"}`,
+    `Published date: ${comparison.rackPublishedDate ? formatDateTime(comparison.rackPublishedDate) : "n/a"}`,
+    `Fetched at: ${comparison.rackFetchedAt ? formatDateTime(comparison.rackFetchedAt) : "n/a"}`,
+    `Invoice match keys: supplier, terminal/market, product family, and BOL/report date should line up with the supplier invoice`
+  ];
+}
+function traceLabel(item) {
+  const label = item.label || item.kind || item.componentKey;
+  if (label === "Lowest Rack") return "Lowest Rack Input";
+  if (label === "Lowest of Day Basis" || label === "Spot or Rack") return "Spot or Rack";
+  if (item.kind === "active_taxes") return "Taxes Applied";
+  return label;
+}
+function traceLabelForMode(item, mode) {
+  const label = traceLabel(item);
+  if (label === "Spot or Rack") {
+    return mode === "spot" ? "Spot Basis" : mode === "rack" ? "Rack Basis" : label;
+  }
+  return label;
+}
+const TRACE_LABELS_TO_HIDE = new Set([
+  "Contract Minus",
+  "Freight",
+  "Rack Margin",
+  "Tax",
+  "Taxes Applied",
+  "Discount",
+  "Distribution Terminal",
+  "Today's Cost",
+  "discount_not_applied"
+]);
+const TRACE_KINDS_TO_HIDE = new Set(["active_taxes", "discount_not_applied"]);
+function filteredTraceItems(output) {
+  return (output?.trace || []).filter((item) => {
+    const label = traceLabel(item);
+    const kind = String(item?.kind || "");
+    return !TRACE_LABELS_TO_HIDE.has(label) && !TRACE_KINDS_TO_HIDE.has(kind);
+  });
+}
+function traceSourceText(item) {
+  return String(item?.sourcePath || "").trim();
+}
+function traceRowTone(item, mode) {
+  const label = traceLabel(item);
+  if (label === "Landed Cost Price") return "price-tables-trace-row-success";
+  if (mode === "spot" && traceLabelForMode(item, mode) === "Spot Basis") return "price-tables-trace-row-spot";
+  if (mode === "rack" && traceLabelForMode(item, mode) === "Rack Basis") return "price-tables-trace-row-rack";
+  return "";
+}
+function traceIndentLevel(item, mode) {
+  const label = traceLabelForMode(item, mode);
+  if (/prepay/i.test(label)) return 1;
+  if (/(federal|fed excise|state excise|sales tax amt|sales tax amount|sales tax rate|storage fee|storage fees|freight)/i.test(label)) return 1;
+  return 0;
+}
+function traceDisplayAmount(item, mode) {
+  const label = traceLabelForMode(item, mode);
+  if (/sales tax rate/i.test(label)) {
+    const value = item.contribution != null ? item.contribution : item.value;
+    return formatPercent(value);
+  }
+  return traceAmountForMode(item, mode);
+}
+function basisCellTone(kind, recommendation) {
+  if (kind === "spot") return "price-tables-tone-spot";
+  if (kind === "rack") return "price-tables-tone-rack";
+  if (kind === "winner") return recommendation === "spot" ? "price-tables-tone-spot" : recommendation === "rack" ? "price-tables-tone-rack" : "";
+  return "";
+}
 function customerToForm(customer) { return { ...EMPTY_CUSTOMER, ...(customer || {}) }; }
 function profileToForm(profile) {
   if (!profile) return EMPTY_PROFILE;
   const rules = profile.rules || {};
-  const { branch = "unbranded", marketKey = "", terminalKey = "", ...extraRules } = rules;
-  return { ...EMPTY_PROFILE, ...profile, branch, marketKey, terminalKey, extraRulesJson: prettyJson(extraRules) };
+  const {
+    branch = "unbranded",
+    marketKey = "",
+    terminalKey = "",
+    distributionLabel = "",
+    gasPrepay = "",
+    dieselPrepay = "",
+    storageFee = "",
+    gasFedExcise = "",
+    gasStateExcise = "",
+    dieselFedExcise = "",
+    dieselStateExcise = "",
+    gasSalesTaxRate = "",
+    dieselSalesTaxRate = "",
+    gasRetailMargin = "",
+    dieselRetailMargin = "",
+    ...extraRules
+  } = rules;
+  return { ...EMPTY_PROFILE, ...profile, branch, marketKey, terminalKey, distributionLabel, gasPrepay, dieselPrepay, storageFee, gasFedExcise, gasStateExcise, dieselFedExcise, dieselStateExcise, gasSalesTaxRate, dieselSalesTaxRate, gasRetailMargin, dieselRetailMargin, extraRulesJson: prettyJson(extraRules) };
 }
 function ruleToForm(rule) { return rule ? { ...EMPTY_RULE, ...rule } : EMPTY_RULE; }
 function componentsToRows(components) {
@@ -50,36 +264,125 @@ function rowRemove(setter, index) { setter((current) => current.filter((_, i) =>
 function csvValues(value) { return String(value || "").split(",").map((item) => item.trim()).filter(Boolean); }
 function selectedOptionValues(event) { return Array.from(event.target.selectedOptions || [], (option) => option.value); }
 function contactsToRows(contacts) { return contacts?.length ? contacts.map((item) => ({ ...EMPTY_CONTACT, ...item })) : [{ ...EMPTY_CONTACT }]; }
-function outputMetricsFromRecord(record) { return PRODUCT_FAMILIES.map((family) => ({ productFamily: family, basePrice: record?.[`${family}Base`], totalPrice: record?.[`${family}Total`] })); }
+function outputMetricsFromRecord(record) { return VISIBLE_PRODUCT_FAMILIES.map((family) => ({ productFamily: family, basePrice: record?.[`${family}Base`], totalPrice: record?.[`${family}Total`] })); }
+function generatedOutputForFamily(record, family) {
+  return (record?.detail?.outputs || []).find((item) => item.productFamily === family) || null;
+}
+function generatedBasisValues(record, family) {
+  const output = generatedOutputForFamily(record, family);
+  if (!output) return { spot: null, rack: null };
+  if (output.basisComparison) {
+    return {
+      spot: output.basisComparison.spotBasis,
+      rack: output.basisComparison.rackBasis
+    };
+  }
+  const basis = basisTraceItem(output);
+  return basis ? { spot: basis.spotValue, rack: basis.rackValue } : { spot: null, rack: null };
+}
+function latestGeneratedOutputs(items) {
+  const latest = new Map();
+  for (const item of items || []) {
+    const key = `${item.customerId || item.customerName || ""}|${item.pricingDate || ""}`;
+    const current = latest.get(key);
+    if (!current) {
+      latest.set(key, item);
+      continue;
+    }
+    const currentCreatedAt = Date.parse(current.createdAt || 0);
+    const nextCreatedAt = Date.parse(item.createdAt || 0);
+    if (nextCreatedAt >= currentCreatedAt) {
+      latest.set(key, item);
+    }
+  }
+  return [...latest.values()].sort((a, b) => (
+    String(b.pricingDate || "").localeCompare(String(a.pricingDate || "")) ||
+    String(b.createdAt || "").localeCompare(String(a.createdAt || "")) ||
+    String(a.customerName || "").localeCompare(String(b.customerName || ""))
+  ));
+}
 function sourceValueMatchesTerminal(value, terminalKey) {
   if (!terminalKey) return true;
   return String(value?.terminalKey || "").trim() === String(terminalKey).trim();
 }
 
-function OutputCards({ outputs, fallbackStatus }) {
+function OutputCards({ outputs, fallbackStatus, onOpenProfile }) {
+  const [selectedTrace, setSelectedTrace] = useState(null);
+
+  function setTraceMode(output, mode) {
+    setSelectedTrace((current) => {
+      if (current?.productFamily === output.productFamily && current?.mode === mode) {
+        return null;
+      }
+      return { productFamily: output.productFamily, mode };
+    });
+  }
+
+  const visibleOutputs = outputs.filter((output) => VISIBLE_PRODUCT_FAMILIES.includes(output.productFamily));
+  const detailOutput = visibleOutputs.find((output) => output.productFamily === selectedTrace?.productFamily) || null;
+  const detailMode = selectedTrace?.mode || "";
+  const detailTraceItems = detailOutput && detailMode ? filteredTraceItems(detailOutput) : [];
+
   return (
-    <div className="price-tables-output-list">
-      {outputs.map((output) => (
+    <div className="price-tables-output-stack">
+      <div className="price-tables-output-list">
+      {visibleOutputs.map((output) => {
+        const basis = basisTraceItem(output);
+        const derived = derivedBasisTotals(output);
+        const activeTraceMode = selectedTrace?.productFamily === output.productFamily ? selectedTrace.mode : "";
+        return (
         <div key={output.productFamily} className="price-tables-output-card">
-          <div className="price-tables-output-head"><strong>{output.productFamily}</strong><span>{output.status || fallbackStatus}</span></div>
-          <div className="price-tables-output-metrics">
-            <span>Base {formatMoney(output.basePrice)}</span>
-            {"taxes" in output ? <span>Taxes {formatMoney(output.taxes)}</span> : null}
-            <span>Total {formatMoney(output.totalPrice)}</span>
-          </div>
-          {output.trace?.length ? (
-            <div className="price-tables-trace">
-              {output.trace.map((item, index) => (
-                <div key={`${output.productFamily}-${index}`} className="price-tables-trace-row">
-                  <strong>{item.label || item.kind || item.componentKey}</strong>
-                  <span>{item.detail}</span>
-                  <em>{item.contribution != null ? formatMoney(item.contribution) : item.value != null ? formatMoney(item.value) : "n/a"}</em>
-                </div>
-              ))}
+          <div className="price-tables-output-head"><strong>{productFamilyLabel(output.productFamily)}</strong><span>{output.status || fallbackStatus}</span></div>
+          {basis ? (
+            <div className="price-tables-basis-grid">
+              <div className={basisCellTone("spot", basis.recommendation)}><span>Spot Basis</span><strong>{formatMoney(basis.spotValue)}</strong>{formatBasisObserved(output, "spot") ? <small>{formatBasisObserved(output, "spot")}</small> : null}</div>
+              <div className={basisCellTone("rack", basis.recommendation)}><span>Rack Basis</span><strong>{formatMoney(basis.rackValue)}</strong>{formatBasisObserved(output, "rack") ? <small>{formatBasisObserved(output, "rack")}</small> : null}</div>
+              <div className={basisCellTone("winner", basis.recommendation)}><span>Using</span><strong>{basis.recommendation || "n/a"}</strong></div>
+              <button type="button" className={`price-tables-basis-action ${basisCellTone("spot", basis.recommendation)}${activeTraceMode === "spot" ? " price-tables-basis-action-active" : ""}`} onClick={() => setTraceMode(output, "spot")}><span>Derived Spot</span><strong>{formatMoney(derived?.spotTotal)}</strong></button>
+              <button type="button" className={`price-tables-basis-action ${basisCellTone("rack", basis.recommendation)}${activeTraceMode === "rack" ? " price-tables-basis-action-active" : ""}`} onClick={() => setTraceMode(output, "rack")}><span>Derived Rack</span><strong>{formatMoney(derived?.rackTotal)}</strong></button>
+              <div className={basisCellTone("winner", basis.recommendation)}><span>Difference</span><strong>{derived?.difference == null ? "n/a" : `${derived.difference > 0 ? "+" : ""}${formatMoney(derived.difference)}`}</strong></div>
             </div>
           ) : null}
         </div>
-      ))}
+      )})}
+      </div>
+      {detailOutput && detailMode ? (
+        <div className="price-tables-trace-card">
+          <div className="price-tables-trace-card-head">
+            <div>
+              <strong>{detailMode === "spot" ? "Derived Spot Detail" : "Derived Rack Detail"} · {productFamilyLabel(detailOutput.productFamily)}</strong>
+              <span>{traceModeSummary(detailOutput, detailMode)}</span>
+            </div>
+            <button type="button" className="price-tables-trace-toggle" onClick={() => setSelectedTrace(null)}>Hide details</button>
+          </div>
+          <div className={`price-tables-detail-card ${detailMode === "spot" ? "price-tables-tone-spot" : "price-tables-tone-rack"}`.trim()}>
+            <strong>{detailMode === "spot" ? "Spot pickup detail" : "Rack pickup detail"}</strong>
+            {basisValidationLines(detailOutput, detailMode).map((line) => <span key={line}>{line}</span>)}
+          </div>
+          <div className="price-tables-trace">
+            {detailTraceItems.map((item, index) => (
+              <div key={`${detailOutput.productFamily}-${index}`} className={`price-tables-trace-row ${traceRowTone(item, detailMode)} ${traceIndentLevel(item, detailMode) ? `price-tables-trace-row-indent-${traceIndentLevel(item, detailMode)}` : ""}`.trim()}>
+                <div className="price-tables-trace-main">
+                  <strong>{traceLabelForMode(item, detailMode)}</strong>
+                  {item.detail ? <span>{traceDetailForMode(item, detailMode)}</span> : null}
+                  {traceSourceText(item) ? (
+                    <small>
+                      {traceSourceText(item)}
+                      {traceSourceText(item).startsWith("Profile >") && onOpenProfile ? (
+                        <>
+                          {" "}
+                          <button type="button" className="price-tables-inline-link" onClick={onOpenProfile}>Open profile</button>
+                        </>
+                      ) : null}
+                    </small>
+                  ) : null}
+                </div>
+                <em>{traceDisplayAmount(item, detailMode)}</em>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -102,12 +405,11 @@ export function PriceTablesPage() {
   const [sourceDraft, setSourceDraft] = useState(EMPTY_SOURCE);
   const [sourceValueRows, setSourceValueRows] = useState([{ ...EMPTY_SOURCE_VALUE }]);
   const [selectedSourceDetail, setSelectedSourceDetail] = useState(null);
-  const [previewDate, setPreviewDate] = useState(new Date().toISOString().slice(0, 10));
+  const [previewDate, setPreviewDate] = useState(isoDate(new Date()));
   const [preview, setPreview] = useState(null);
   const [runHistory, setRunHistory] = useState(null);
   const [generatedOutputs, setGeneratedOutputs] = useState([]);
-  const [detailView, setDetailView] = useState("run_review");
-  const [outputScope, setOutputScope] = useState("date");
+  const [historyDateMode, setHistoryDateMode] = useState("selected");
   const [selectedOutputId, setSelectedOutputId] = useState("");
   const [selectedOutputDetail, setSelectedOutputDetail] = useState(null);
   const [status, setStatus] = useState("");
@@ -148,13 +450,58 @@ export function PriceTablesPage() {
     }
   }
 
-  async function loadGeneratedWorkspace(pricingDate, customerId, scope = outputScope, preferredOutputId = "") {
+  async function loadGeneratedWorkspace(pricingDate, preferredOutputId = "") {
     try {
-      const customerFilter = scope === "customer" ? customerId : "";
-      const [history, outputs] = await Promise.all([
-        api.getPricingRunHistory(pricingDate, customerFilter ? { customerId: customerFilter } : {}),
-        api.getGeneratedPricingOutputs({ pricingDate, ...(customerFilter ? { customerId: customerFilter } : {}) })
-      ]);
+      let history;
+      let outputs;
+      const baseFilters = {};
+      if (historyDateMode === "selected") {
+        const [rawHistory, rawOutputs] = await Promise.all([
+          api.getPricingRunHistory(pricingDate, baseFilters),
+          api.getGeneratedPricingOutputs({ pricingDate, ...baseFilters })
+        ]);
+        outputs = latestGeneratedOutputs(rawOutputs);
+        history = {
+          ...rawHistory,
+          total: outputs.length,
+          generatedCount: outputs.filter((item) => item.status !== "incomplete").length,
+          incompleteCount: outputs.filter((item) => item.status === "incomplete").length,
+          outputs
+        };
+      } else if (historyDateMode === "today") {
+        const today = todayDate();
+        outputs = latestGeneratedOutputs(await api.getGeneratedPricingOutputs({ pricingDate: today, ...baseFilters }));
+        history = {
+          pricingDate: today,
+          total: outputs.length,
+          generatedCount: outputs.filter((item) => item.status !== "incomplete").length,
+          incompleteCount: outputs.filter((item) => item.status === "incomplete").length,
+          outputs
+        };
+      } else if (historyDateMode === "yesterday") {
+        const yesterday = yesterdayDate();
+        outputs = latestGeneratedOutputs(await api.getGeneratedPricingOutputs({ pricingDate: yesterday, ...baseFilters }));
+        history = {
+          pricingDate: yesterday,
+          total: outputs.length,
+          generatedCount: outputs.filter((item) => item.status !== "incomplete").length,
+          incompleteCount: outputs.filter((item) => item.status === "incomplete").length,
+          outputs
+        };
+      } else {
+        const [todayOutputs, yesterdayOutputs] = await Promise.all([
+          api.getGeneratedPricingOutputs({ pricingDate: todayDate(), ...baseFilters }),
+          api.getGeneratedPricingOutputs({ pricingDate: yesterdayDate(), ...baseFilters })
+        ]);
+        outputs = latestGeneratedOutputs([...todayOutputs, ...yesterdayOutputs]);
+        history = {
+          pricingDate: `${yesterdayDate()} to ${todayDate()}`,
+          total: outputs.length,
+          generatedCount: outputs.filter((item) => item.status !== "incomplete").length,
+          incompleteCount: outputs.filter((item) => item.status === "incomplete").length,
+          outputs
+        };
+      }
       setRunHistory(history);
       setGeneratedOutputs(outputs);
       setSelectedOutputId((current) => {
@@ -172,7 +519,7 @@ export function PriceTablesPage() {
 
   useEffect(() => { loadWorkspace(); }, []);
   useEffect(() => { loadDateInputs(previewDate); }, [previewDate]);
-  useEffect(() => { loadGeneratedWorkspace(previewDate, selectedCustomerId, outputScope); }, [previewDate, selectedCustomerId, outputScope]);
+  useEffect(() => { loadGeneratedWorkspace(previewDate); }, [previewDate, historyDateMode]);
   useEffect(() => {
     if (!selectedCustomerId) { setCustomerForm(EMPTY_CUSTOMER); setContactRows([{ ...EMPTY_CONTACT }]); setProfileForm(EMPTY_PROFILE); return; }
     let active = true;
@@ -224,7 +571,8 @@ export function PriceTablesPage() {
     setError(""); setStatus("Saving pricing profile...");
     try {
       const extraRules = profileForm.extraRulesJson ? JSON.parse(profileForm.extraRulesJson) : {};
-      await api.saveCustomerPricingProfile(selectedCustomerId, { ...profileForm, rules: { branch: profileForm.branch, marketKey: profileForm.marketKey, terminalKey: profileForm.terminalKey, ...extraRules } });
+      const normalizedRuleFields = Object.fromEntries(PROFILE_RULE_FIELDS.map((field) => [field, profileForm[field] === "" ? null : profileForm[field]]));
+      await api.saveCustomerPricingProfile(selectedCustomerId, { ...profileForm, rules: { branch: profileForm.branch, marketKey: profileForm.marketKey, terminalKey: profileForm.terminalKey, ...normalizedRuleFields, ...extraRules } });
       setStatus("Pricing profile saved.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError || "Unable to save profile"));
@@ -306,13 +654,11 @@ export function PriceTablesPage() {
     try { setPreview(await api.previewPricingRun({ customerId: selectedCustomerId, pricingDate: previewDate })); setStatus("Preview ready."); }
     catch (previewError) { setError(previewError instanceof Error ? previewError.message : String(previewError || "Unable to run preview")); setStatus(""); }
   }
-  async function handleGenerateRun(mode) {
-    if (mode === "selected" && !selectedCustomerId) return;
-    setError(""); setStatus(mode === "all" ? "Generating pricing outputs for all customers..." : "Generating pricing output...");
+  async function handleGenerateRun() {
+    setError(""); setStatus("Generating pricing outputs for all customers...");
     try {
-      const result = await api.generatePricingRun({ pricingDate: previewDate, ...(mode === "selected" ? { customerId: selectedCustomerId } : {}) });
-      if (mode === "selected" && selectedCustomerId) setPreview(await api.previewPricingRun({ customerId: selectedCustomerId, pricingDate: previewDate }));
-      await loadGeneratedWorkspace(previewDate, selectedCustomerId, outputScope, result.outputs?.[0]?.id || "");
+      const result = await api.generatePricingRun({ pricingDate: previewDate });
+      await loadGeneratedWorkspace(previewDate, result.outputs?.[0]?.id || "");
       setStatus(`Generated ${result.generatedCount} pricing output${result.generatedCount === 1 ? "" : "s"} for ${previewDate}.`);
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : String(runError || "Unable to generate pricing run"));
@@ -323,156 +669,86 @@ export function PriceTablesPage() {
   if (loading) return <div className="login-status">Loading price tables workspace...</div>;
 
   const outputDetailPayload = selectedOutputDetail?.detail || {};
-  const outputDetailCards = outputDetailPayload.outputs?.length ? outputDetailPayload.outputs : outputMetricsFromRecord(selectedOutputDetail);
+  const outputDetailCards = (outputDetailPayload.outputs?.length ? outputDetailPayload.outputs : outputMetricsFromRecord(selectedOutputDetail))
+    .filter((item) => VISIBLE_PRODUCT_FAMILIES.includes(item.productFamily));
+  const previewOutputCards = selectedOutputDetail
+    ? outputDetailCards
+    : (preview?.outputs || []).filter((item) => VISIBLE_PRODUCT_FAMILIES.includes(item.productFamily));
+  const previewStatus = selectedOutputDetail?.status || preview?.status || "";
+  const previewMissingInputs = selectedOutputDetail?.detail?.missingInputs || preview?.missingInputs || [];
 
   return (
     <div className="price-tables-page">
-      <section className="price-tables-hero">
-        <div>
-          <div className="price-tables-kicker">Customer Pricing Workspace</div>
-          <h1>Price Tables</h1>
-          <p>Work customer setup, rule configuration, taxes, source snapshots, preview, and generated daily outputs in one workflow.</p>
-        </div>
-        <div className="price-tables-hero-actions">
-          <label><span>Pricing Date</span><input type="date" value={previewDate} onChange={(event) => setPreviewDate(event.target.value)} /></label>
-          <button type="button" onClick={handleRunPreview} disabled={!selectedCustomerId}>Run Preview</button>
-        </div>
-      </section>
       {status ? <div className="price-tables-banner price-tables-banner-success">{status}</div> : null}
       {error ? <div className="price-tables-banner price-tables-banner-error">{error}</div> : null}
       <div className="price-tables-layout">
-        <section className="card price-tables-panel">
-          <div className="price-tables-panel-head">
-            <div><div className="price-tables-panel-kicker">Customers</div><h3>Customer and profile</h3></div>
-            <button type="button" onClick={handleCreateCustomer}>New Customer</button>
-          </div>
-          <div className="price-tables-shell">
-            <div className="price-tables-list">
-              {customers.length ? customers.map((customer) => (
-                <button key={customer.id} type="button" className={`price-tables-list-item${customer.id === selectedCustomerId ? " price-tables-list-item-active" : ""}`} onClick={() => setSelectedCustomerId(customer.id)}>
-                  <strong>{customer.name}</strong>
-                  <span>{customer.terminalKey || "No terminal"} | {customer.status}</span>
-                </button>
-              )) : <div className="price-tables-empty">No customers yet.</div>}
-            </div>
-            <div className="price-tables-form-stack">
-              <div className="price-tables-form-grid">
-                {["name", "addressLine1", "addressLine2", "city", "state", "postalCode"].map((field) => (
-                  <label key={field}>
-                    <span>{field}</span>
-                    <input value={customerForm[field] ?? ""} onChange={(event) => setCustomerForm((current) => ({ ...current, [field]: event.target.value }))} />
-                  </label>
-                ))}
-                <label>
-                  <span>terminalKey</span>
-                  <select value={customerForm.terminalKey} onChange={(event) => setCustomerForm((current) => ({ ...current, terminalKey: event.target.value }))}>
-                    <option value="">Select terminal</option>
-                    {TERMINAL_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>status</span>
-                  <select value={customerForm.status} onChange={(event) => setCustomerForm((current) => ({ ...current, status: event.target.value }))}>
-                    {CUSTOMER_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                </label>
-              </div>
-              <div className="price-tables-actions"><button type="button" onClick={handleSaveCustomer} disabled={!selectedCustomerId}>Save Customer</button></div>
-              <div className="price-tables-subsection">
-                <div className="price-tables-panel-kicker">Pricing Profile</div>
-                <div className="price-tables-form-grid">
-                  {["effectiveStart", "effectiveEnd", "freightMiles", "freightCostGas", "freightCostDiesel", "rackMarginGas", "rackMarginDiesel", "discountRegular", "discountMid", "discountPremium", "discountDiesel"].map((field) => (
-                    <label key={field}>
-                      <span>{field}</span>
-                      <input type={field.includes("Start") || field.includes("End") ? "date" : "text"} value={profileForm[field] ?? ""} onChange={(event) => setProfileForm((current) => ({ ...current, [field]: event.target.value }))} />
-                    </label>
-                  ))}
-                  <label><span>branch</span><select value={profileForm.branch} onChange={(event) => setProfileForm((current) => ({ ...current, branch: event.target.value }))}>{PRICING_BRANCH_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                  <label><span>marketKey</span><select value={profileForm.marketKey} onChange={(event) => setProfileForm((current) => ({ ...current, marketKey: event.target.value }))}><option value="">Select market</option>{MARKET_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                  <label><span>terminalKey</span><select value={profileForm.terminalKey} onChange={(event) => setProfileForm((current) => ({ ...current, terminalKey: event.target.value }))}><option value="">Select terminal</option>{TERMINAL_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                  <label className="price-tables-full"><span>extraRulesJson</span><textarea rows={5} value={profileForm.extraRulesJson} onChange={(event) => setProfileForm((current) => ({ ...current, extraRulesJson: event.target.value }))} /></label>
-                </div>
-                <div className="price-tables-actions"><button type="button" onClick={handleSaveProfile} disabled={!selectedCustomerId}>Save Profile</button></div>
-              </div>
-              <div className="price-tables-subsection">
-                <div className="price-tables-inline-head">
-                  <div className="price-tables-panel-kicker">Contacts</div>
-                  <button type="button" onClick={() => setContactRows((current) => [...current, { ...EMPTY_CONTACT }])}>Add Contact</button>
-                </div>
-                <div className="price-tables-table-wrap">
-                  <table className="table price-tables-table">
-                    <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Fax Email</th><th>Primary</th><th>Delivery</th><th /></tr></thead>
-                    <tbody>
-                      {contactRows.map((row, index) => (
-                        <tr key={`contact-${row.id || index}`}>
-                          <td><input value={row.name} onChange={(event) => rowUpdate(setContactRows, index, "name", event.target.value)} /></td>
-                          <td><input value={row.email} onChange={(event) => rowUpdate(setContactRows, index, "email", event.target.value)} /></td>
-                          <td><input value={row.phone} onChange={(event) => rowUpdate(setContactRows, index, "phone", event.target.value)} /></td>
-                          <td><input value={row.faxEmail} onChange={(event) => rowUpdate(setContactRows, index, "faxEmail", event.target.value)} /></td>
-                          <td><input type="checkbox" checked={!!row.isPrimary} onChange={(event) => rowUpdate(setContactRows, index, "isPrimary", event.target.checked)} /></td>
-                          <td><select value={row.deliveryMethod} onChange={(event) => rowUpdate(setContactRows, index, "deliveryMethod", event.target.value)}>{DELIVERY_METHOD_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                          <td><button type="button" onClick={() => rowRemove(setContactRows, index)}>Remove</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="price-tables-actions"><button type="button" onClick={handleSaveContacts} disabled={!selectedCustomerId}>Save Contacts</button></div>
-              </div>
-            </div>
-          </div>
-        </section>
         <section className="card price-tables-panel price-tables-preview-panel">
           <div className="price-tables-panel-head">
-            <div><div className="price-tables-panel-kicker">Preview</div><h3>Daily output trace</h3></div>
-            <div className="price-tables-preview-meta"><strong>{selectedCustomer?.name || "No customer selected"}</strong><span>{previewDate}</span></div>
-          </div>
-          {preview ? (
-            <div className="price-tables-preview-stack">
-              <div className="price-tables-preview-grid">
-                <div className="metric-card"><div className="metric-label">Preview Status</div><div className="metric-value">{preview.status}</div></div>
-                <div className="metric-card"><div className="metric-label">Active Rules</div><div className="metric-value">{preview.activeRules?.length || 0}</div></div>
-                <div className="metric-card"><div className="metric-label">Source Values</div><div className="metric-value">{preview.sourceValueCount || 0}</div></div>
-              </div>
-              {preview.missingInputs?.length ? <div className="price-tables-warning">{preview.missingInputs.map((item) => <div key={item.key}>{item.message}</div>)}</div> : null}
-              <OutputCards outputs={preview.outputs || []} fallbackStatus={preview.status} />
-            </div>
-          ) : <div className="price-tables-empty">Run preview to inspect active rule evaluation, taxes, and per-product trace output.</div>}
-        </section>
-        <section className="card price-tables-panel">
-          <div className="price-tables-panel-head">
-            <div><div className="price-tables-panel-kicker">Price Run</div><h3>Generate and review persisted outputs</h3></div>
             <div className="price-tables-button-row">
-              <button type="button" onClick={() => handleGenerateRun("selected")} disabled={!selectedCustomerId}>Generate Selected</button>
-              <button type="button" onClick={() => handleGenerateRun("all")} disabled={!customers.length}>Generate All</button>
+              <label><span>Pricing Date</span><input type="date" value={previewDate} onChange={(event) => setPreviewDate(event.target.value)} /></label>
             </div>
           </div>
           <div className="price-tables-form-stack">
-            <div className="price-tables-preview-grid">
-              <div className="metric-card"><div className="metric-label">Run Date</div><div className="metric-value">{runHistory?.pricingDate || previewDate}</div></div>
-              <div className="metric-card"><div className="metric-label">Outputs</div><div className="metric-value">{runHistory?.total || 0}</div></div>
-              <div className="metric-card"><div className="metric-label">Incomplete</div><div className="metric-value">{runHistory?.incompleteCount || 0}</div></div>
-            </div>
             <div className="price-tables-inline-head">
-              <div className="price-tables-panel-kicker">History Filter</div>
+              <div className="price-tables-panel-kicker">History Dates</div>
               <div className="price-tables-segmented">
-                <button type="button" className={outputScope === "date" ? "price-tables-segmented-active" : ""} onClick={() => setOutputScope("date")}>All Customers</button>
-                <button type="button" className={outputScope === "customer" ? "price-tables-segmented-active" : ""} onClick={() => setOutputScope("customer")} disabled={!selectedCustomerId}>Selected Customer</button>
+                <button type="button" className={historyDateMode === "selected" ? "price-tables-segmented-active" : ""} onClick={() => setHistoryDateMode("selected")}>Selected Date</button>
+                <button type="button" className={historyDateMode === "today" ? "price-tables-segmented-active" : ""} onClick={() => setHistoryDateMode("today")}>Today</button>
+                <button type="button" className={historyDateMode === "yesterday" ? "price-tables-segmented-active" : ""} onClick={() => setHistoryDateMode("yesterday")}>Yesterday</button>
+                <button type="button" className={historyDateMode === "today_yesterday" ? "price-tables-segmented-active" : ""} onClick={() => setHistoryDateMode("today_yesterday")}>Today + Yesterday</button>
               </div>
+            </div>
+            <div className="price-tables-button-row">
+              <button type="button" onClick={handleGenerateRun} disabled={!customers.length}>Generate All</button>
             </div>
             {runHistory?.outputs?.length ? (
               <div className="price-tables-table-wrap">
                 <table className="table price-tables-table">
-                  <thead><tr><th>Customer</th><th>Status</th><th>Regular</th><th>Diesel</th><th>Created</th></tr></thead>
+                  <thead><tr><th>Pricing Date</th><th>Terminal</th><th>Regular</th><th>Premium</th><th>Diesel</th><th>Created</th></tr></thead>
                   <tbody>
                     {runHistory.outputs.map((output) => (
-                      <tr key={output.id}>
-                        <td>{output.customerName}</td>
-                        <td>{output.status}</td>
-                        <td>{formatMoney(output.regularTotal)}</td>
-                        <td>{formatMoney(output.dieselTotal)}</td>
-                        <td>{formatDateTime(output.createdAt)}</td>
-                      </tr>
+                        <tr key={output.id} className={output.status && output.status !== "generated" ? "price-tables-row-error" : ""}>
+                          <td>{formatDateTime(output.pricingDate)}</td>
+                          <td>
+                            <button type="button" className="price-tables-inline-link" onClick={() => setSelectedOutputId(output.id)}>
+                              {output.customerName}
+                            </button>
+                          </td>
+                          <td>
+                            {(() => {
+                              const basis = generatedBasisValues(output, "regular");
+                              return (
+                                <div className="price-tables-inline-basis-wrap">
+                                  <span className="price-tables-inline-basis price-tables-tone-spot">{formatMoney(basis.spot)}</span>
+                                  <span className="price-tables-inline-basis price-tables-tone-rack">{formatMoney(basis.rack)}</span>
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          <td>
+                            {(() => {
+                              const basis = generatedBasisValues(output, "premium");
+                              return (
+                                <div className="price-tables-inline-basis-wrap">
+                                  <span className="price-tables-inline-basis price-tables-tone-spot">{formatMoney(basis.spot)}</span>
+                                  <span className="price-tables-inline-basis price-tables-tone-rack">{formatMoney(basis.rack)}</span>
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          <td>
+                            {(() => {
+                              const basis = generatedBasisValues(output, "diesel");
+                              return (
+                                <div className="price-tables-inline-basis-wrap">
+                                  <span className="price-tables-inline-basis price-tables-tone-spot">{formatMoney(basis.spot)}</span>
+                                  <span className="price-tables-inline-basis price-tables-tone-rack">{formatMoney(basis.rack)}</span>
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          <td>{formatDateTime(output.createdAt)}</td>
+                        </tr>
                     ))}
                   </tbody>
                 </table>
@@ -482,291 +758,19 @@ export function PriceTablesPage() {
         </section>
         <section className="card price-tables-panel price-tables-preview-panel">
           <div className="price-tables-panel-head">
-            <div><div className="price-tables-panel-kicker">Workspace Detail</div><h3>Run review, rules, inputs, and logs</h3></div>
-            <div className="price-tables-detail-picker">
-              <label>
-                <span>View</span>
-                <select value={detailView} onChange={(event) => setDetailView(event.target.value)}>
-                  <option value="run_review">Run Review</option>
-                  <option value="rules">Rules</option>
-                  <option value="inputs">Inputs</option>
-                  <option value="opis_report">OPIS Report</option>
-                  <option value="logs">Output Log</option>
-                </select>
-              </label>
-            </div>
+            <div />
           </div>
-          {detailView === "run_review" ? (
-            <div className="price-tables-form-stack">
-              <div className="price-tables-detail-card">
-                <div><strong>{selectedCustomer?.name || "No customer selected"}</strong></div>
-                <div>{previewDate}</div>
-                <div>Use this view for preview output and the most recent generated run review.</div>
+          {selectedOutputId && !selectedOutputDetail ? (
+            <div className="price-tables-empty">Loading output detail...</div>
+          ) : previewOutputCards.length ? (
+            <div className="price-tables-preview-stack">
+              <div className="price-tables-preview-grid">
+                <div className="metric-card"><div className="metric-label">Terminal</div><div className="metric-value">{selectedOutputDetail?.customerName || selectedCustomer?.name || "No terminal selected"}</div></div>
               </div>
-              {preview ? (
-                <>
-                  <div className="price-tables-preview-grid">
-                    <div className="metric-card"><div className="metric-label">Preview Status</div><div className="metric-value">{preview.status}</div></div>
-                    <div className="metric-card"><div className="metric-label">Active Rules</div><div className="metric-value">{preview.activeRules?.length || 0}</div></div>
-                    <div className="metric-card"><div className="metric-label">Source Values</div><div className="metric-value">{preview.sourceValueCount || 0}</div></div>
-                  </div>
-                  {preview.missingInputs?.length ? <div className="price-tables-warning">{preview.missingInputs.map((item) => <div key={item.key}>{item.message}</div>)}</div> : null}
-                  <OutputCards outputs={preview.outputs || []} fallbackStatus={preview.status} />
-                </>
-              ) : <div className="price-tables-empty">Run preview to inspect active rule evaluation, taxes, and per-product trace output.</div>}
+              {previewMissingInputs.length ? <div className="price-tables-warning">{previewMissingInputs.map((item) => <div key={item.key}>{item.message}</div>)}</div> : null}
+              <OutputCards outputs={previewOutputCards} fallbackStatus={previewStatus} onOpenProfile={null} />
             </div>
-          ) : null}
-          {detailView === "rules" ? (
-            <div className="price-tables-shell">
-              <div className="price-tables-list">
-                {rules.length ? rules.map((rule) => (
-                  <button key={rule.id} type="button" className={`price-tables-list-item${rule.id === selectedRuleId ? " price-tables-list-item-active" : ""}`} onClick={() => setSelectedRuleId(rule.id)}>
-                    <strong>{rule.name}</strong>
-                    <span>{rule.productFamily} | {rule.status} | {rule.versionLabel || "unversioned"}</span>
-                  </button>
-                )) : <div className="price-tables-empty">No pricing rules yet.</div>}
-              </div>
-              <div className="price-tables-form-stack">
-                <div className="price-tables-panel-head">
-                  <div><div className="price-tables-panel-kicker">Rules</div><h3>Rule sets and component editor</h3></div>
-                  <button type="button" onClick={handleCreateRule}>New Rule</button>
-                </div>
-                <div className="price-tables-form-grid">
-                  <label className="price-tables-full"><span>name</span><input value={ruleForm.name} onChange={(event) => setRuleForm((current) => ({ ...current, name: event.target.value }))} /></label>
-                  <label><span>productFamily</span><select value={ruleForm.productFamily} onChange={(event) => setRuleForm((current) => ({ ...current, productFamily: event.target.value }))}>{PRODUCT_FAMILIES.map((family) => <option key={family} value={family}>{family}</option>)}</select></label>
-                  <label><span>status</span><select value={ruleForm.status} onChange={(event) => setRuleForm((current) => ({ ...current, status: event.target.value }))}>{RULE_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                  <label><span>effectiveStart</span><input type="date" value={ruleForm.effectiveStart} onChange={(event) => setRuleForm((current) => ({ ...current, effectiveStart: event.target.value }))} /></label>
-                  <label><span>effectiveEnd</span><input type="date" value={ruleForm.effectiveEnd} onChange={(event) => setRuleForm((current) => ({ ...current, effectiveEnd: event.target.value }))} /></label>
-                  <label><span>versionLabel</span><input value={ruleForm.versionLabel} onChange={(event) => setRuleForm((current) => ({ ...current, versionLabel: event.target.value }))} /></label>
-                  <label className="price-tables-full"><span>notes</span><textarea rows={3} value={ruleForm.notes} onChange={(event) => setRuleForm((current) => ({ ...current, notes: event.target.value }))} /></label>
-                </div>
-                <div className="price-tables-subsection">
-                  <div className="price-tables-inline-head">
-                    <div className="price-tables-panel-kicker">Components</div>
-                    <button type="button" onClick={() => setComponentRows((current) => [...current, { ...EMPTY_COMPONENT, sortOrder: String(current.length + 1) }])}>Add Component</button>
-                  </div>
-                  <div className="price-tables-table-wrap">
-                    <table className="table price-tables-table">
-                      <thead><tr><th>Key</th><th>Label</th><th>Kind</th><th>Source Ref</th><th>Default</th><th>Multiplier</th><th>Order</th><th>Editable</th><th>Metadata</th><th /></tr></thead>
-                      <tbody>
-                        {componentRows.map((row, index) => (
-                          <tr key={`component-${index}`}>
-                            <td><input value={row.componentKey} onChange={(event) => rowUpdate(setComponentRows, index, "componentKey", event.target.value)} /></td>
-                            <td><input value={row.label} onChange={(event) => rowUpdate(setComponentRows, index, "label", event.target.value)} /></td>
-                            <td><select value={row.sourceKind} onChange={(event) => rowUpdate(setComponentRows, index, "sourceKind", event.target.value)}>{COMPONENT_SOURCE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                            <td><input value={row.sourceRef} onChange={(event) => rowUpdate(setComponentRows, index, "sourceRef", event.target.value)} /></td>
-                            <td><input value={row.defaultValue} onChange={(event) => rowUpdate(setComponentRows, index, "defaultValue", event.target.value)} /></td>
-                            <td><input value={row.multiplier} onChange={(event) => rowUpdate(setComponentRows, index, "multiplier", event.target.value)} /></td>
-                            <td><input value={row.sortOrder} onChange={(event) => rowUpdate(setComponentRows, index, "sortOrder", event.target.value)} /></td>
-                            <td><input type="checkbox" checked={!!row.isEditable} onChange={(event) => rowUpdate(setComponentRows, index, "isEditable", event.target.checked)} /></td>
-                            <td><textarea rows={3} value={row.metadataJson} onChange={(event) => rowUpdate(setComponentRows, index, "metadataJson", event.target.value)} /></td>
-                            <td><button type="button" onClick={() => rowRemove(setComponentRows, index)}>Remove</button></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <div className="price-tables-subsection">
-                  <div className="price-tables-inline-head">
-                    <div className="price-tables-panel-kicker">Vendor Sets</div>
-                    <button type="button" onClick={() => setVendorSetRows((current) => [...current, { ...EMPTY_VENDOR_SET, productFamily: ruleForm.productFamily }])}>Add Vendor Set</button>
-                  </div>
-                  <div className="price-tables-table-wrap">
-                    <table className="table price-tables-table">
-                      <thead><tr><th>Selection</th><th>Family</th><th>Market Key</th><th>Vendors</th><th /></tr></thead>
-                      <tbody>
-                        {vendorSetRows.map((row, index) => (
-                          <tr key={`vendor-set-${index}`}>
-                            <td><select value={row.selectionMode} onChange={(event) => rowUpdate(setVendorSetRows, index, "selectionMode", event.target.value)}>{VENDOR_SELECTION_MODE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                            <td><select value={row.productFamily} onChange={(event) => rowUpdate(setVendorSetRows, index, "productFamily", event.target.value)}>{PRODUCT_FAMILIES.map((family) => <option key={family} value={family}>{family}</option>)}</select></td>
-                            <td><select value={row.marketKey} onChange={(event) => rowUpdate(setVendorSetRows, index, "marketKey", event.target.value)}><option value="">All markets</option>{MARKET_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                            <td><select multiple size={Math.min(4, VENDOR_KEY_OPTIONS.length)} value={csvValues(row.vendorsCsv)} onChange={(event) => rowUpdate(setVendorSetRows, index, "vendorsCsv", selectedOptionValues(event).join(", "))}>{VENDOR_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                            <td><button type="button" onClick={() => rowRemove(setVendorSetRows, index)}>Remove</button></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <div className="price-tables-actions"><button type="button" onClick={handleSaveRule} disabled={!selectedRuleId}>Save Rule</button></div>
-              </div>
-            </div>
-          ) : null}
-          {detailView === "inputs" ? (
-            <div className="price-tables-form-stack">
-              <div className="price-tables-subsection">
-                <div className="price-tables-inline-head">
-                  <div className="price-tables-panel-kicker">Tax Schedules</div>
-                  <button type="button" onClick={() => setTaxRows((current) => [...current, { ...EMPTY_TAX, effectiveStart: previewDate }])}>Add Tax</button>
-                </div>
-                <div className="price-tables-table-wrap">
-                  <table className="table price-tables-table">
-                    <thead><tr><th>Family</th><th>Tax Name</th><th>Value</th><th>Unit</th><th>Start</th><th>End</th><th /></tr></thead>
-                    <tbody>
-                      {taxRows.map((row, index) => (
-                        <tr key={`tax-${index}`}>
-                          <td><select value={row.productFamily} onChange={(event) => rowUpdate(setTaxRows, index, "productFamily", event.target.value)}>{PRODUCT_FAMILIES.map((family) => <option key={family} value={family}>{family}</option>)}</select></td>
-                          <td><select value={row.taxName} onChange={(event) => rowUpdate(setTaxRows, index, "taxName", event.target.value)}><option value="">Select tax</option>{TAX_NAME_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                          <td><input value={row.value} onChange={(event) => rowUpdate(setTaxRows, index, "value", event.target.value)} /></td>
-                          <td><input value={row.unit} onChange={(event) => rowUpdate(setTaxRows, index, "unit", event.target.value)} /></td>
-                          <td><input type="date" value={row.effectiveStart} onChange={(event) => rowUpdate(setTaxRows, index, "effectiveStart", event.target.value)} /></td>
-                          <td><input type="date" value={row.effectiveEnd} onChange={(event) => rowUpdate(setTaxRows, index, "effectiveEnd", event.target.value)} /></td>
-                          <td><button type="button" onClick={() => rowRemove(setTaxRows, index)}>Remove</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="price-tables-actions"><button type="button" onClick={handleSaveTaxes}>Save Taxes</button></div>
-              </div>
-              <div className="price-tables-subsection">
-                <div className="price-tables-inline-head"><div className="price-tables-panel-kicker">Source Snapshots For Date</div></div>
-                <div className="price-tables-shell">
-                  <div className="price-tables-list">
-                    {sources.length ? sources.map((source) => (
-                      <button key={source.id} type="button" className={`price-tables-list-item${source.id === selectedSourceId ? " price-tables-list-item-active" : ""}`} onClick={() => setSelectedSourceId(source.id)}>
-                        <strong>{source.sourceLabel || source.sourceType}</strong>
-                        <span>{source.sourceType} | {source.status}</span>
-                      </button>
-                    )) : <div className="price-tables-empty">No source snapshots for this date.</div>}
-                  </div>
-                  <div className="price-tables-form-stack">
-                    <div className="price-tables-form-grid">
-                      <label><span>sourceType</span><select value={sourceDraft.sourceType} onChange={(event) => setSourceDraft((current) => ({ ...current, sourceType: event.target.value }))}>{SOURCE_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                      <label><span>status</span><select value={sourceDraft.status} onChange={(event) => setSourceDraft((current) => ({ ...current, status: event.target.value }))}>{SNAPSHOT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                      <label className="price-tables-full"><span>sourceLabel</span><input value={sourceDraft.sourceLabel} onChange={(event) => setSourceDraft((current) => ({ ...current, sourceLabel: event.target.value }))} /></label>
-                      <label className="price-tables-full"><span>notes</span><textarea rows={3} value={sourceDraft.notes} onChange={(event) => setSourceDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
-                    </div>
-                    <div className="price-tables-inline-head">
-                      <div className="price-tables-panel-kicker">New Source Values</div>
-                      <button type="button" onClick={() => setSourceValueRows((current) => [...current, { ...EMPTY_SOURCE_VALUE, effectiveDate: previewDate }])}>Add Value</button>
-                    </div>
-                    <div className="price-tables-table-wrap">
-                      <table className="table price-tables-table">
-                        <thead><tr><th>Market</th><th>Terminal</th><th>Product</th><th>Vendor</th><th>Quote</th><th>Value</th><th>Unit</th><th>Effective</th><th /></tr></thead>
-                        <tbody>
-                          {sourceValueRows.map((row, index) => (
-                            <tr key={`source-value-${index}`}>
-                              <td><select value={row.marketKey} onChange={(event) => rowUpdate(setSourceValueRows, index, "marketKey", event.target.value)}><option value="">Any market</option>{MARKET_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                              <td><select value={row.terminalKey} onChange={(event) => rowUpdate(setSourceValueRows, index, "terminalKey", event.target.value)}><option value="">Any terminal</option>{TERMINAL_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                              <td><select value={row.productKey} onChange={(event) => rowUpdate(setSourceValueRows, index, "productKey", event.target.value)}><option value="">Select product</option>{PRODUCT_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                              <td><select value={row.vendorKey} onChange={(event) => rowUpdate(setSourceValueRows, index, "vendorKey", event.target.value)}><option value="">Any vendor</option>{VENDOR_KEY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>
-                              <td><input value={row.quoteCode} onChange={(event) => rowUpdate(setSourceValueRows, index, "quoteCode", event.target.value)} /></td>
-                              <td><input value={row.value} onChange={(event) => rowUpdate(setSourceValueRows, index, "value", event.target.value)} /></td>
-                              <td><input value={row.unit} onChange={(event) => rowUpdate(setSourceValueRows, index, "unit", event.target.value)} /></td>
-                              <td><input type="date" value={row.effectiveDate || previewDate} onChange={(event) => rowUpdate(setSourceValueRows, index, "effectiveDate", event.target.value)} /></td>
-                              <td><button type="button" onClick={() => rowRemove(setSourceValueRows, index)}>Remove</button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="price-tables-actions"><button type="button" onClick={handleCreateSourceSnapshot}>Create Snapshot</button></div>
-                  </div>
-                </div>
-              </div>
-              {selectedSourceDetail ? (
-                <div className="price-tables-subsection">
-                  <div className="price-tables-panel-kicker">Selected Snapshot Detail</div>
-                  <div className="price-tables-detail-card">
-                    <div><strong>{selectedSourceDetail.sourceLabel || selectedSourceDetail.sourceType}</strong></div>
-                    <div>{selectedSourceDetail.sourceType} | {selectedSourceDetail.status} | {selectedSourceDetail.pricingDate}</div>
-                    <div>{selectedSourceDetail.notes || "No notes"}</div>
-                  </div>
-                  <div className="price-tables-table-wrap">
-                    <table className="table price-tables-table">
-                      <thead><tr><th>Market</th><th>Terminal</th><th>Product</th><th>Vendor</th><th>Quote</th><th>Value</th><th>Unit</th><th>Effective</th></tr></thead>
-                      <tbody>
-                        {selectedSourceDetail.values?.map((value) => (
-                          <tr key={value.id}>
-                            <td>{value.marketKey}</td><td>{value.terminalKey}</td><td>{value.productKey}</td><td>{value.vendorKey}</td><td>{value.quoteCode}</td><td>{value.value}</td><td>{value.unit}</td><td>{value.effectiveDate}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {detailView === "opis_report" ? (
-            <div className="price-tables-form-stack">
-              <div className="price-tables-detail-card">
-                <div><strong>{selectedSourceDetail?.sourceLabel || selectedSourceDetail?.sourceType || "No source snapshot selected"}</strong></div>
-                <div>{selectedSourceDetail ? `${selectedSourceDetail.sourceType} | ${selectedSourceDetail.status} | ${selectedSourceDetail.pricingDate}` : "Select a source snapshot from Inputs first."}</div>
-                <div>Terminal filter: {selectedTerminalKey || "All terminals"}</div>
-              </div>
-              {selectedSourceDetail ? (
-                <>
-                  <div className="price-tables-inline-head">
-                    <div className="price-tables-panel-kicker">Filtered OPIS Source Rows</div>
-                    <div className="price-tables-inline-note">Showing only rows for the selected terminal.</div>
-                  </div>
-                  {selectedSourceTerminalValues.length ? (
-                    <div className="price-tables-table-wrap">
-                      <table className="table price-tables-table">
-                        <thead><tr><th>Market</th><th>Terminal</th><th>Product</th><th>Vendor</th><th>Quote</th><th>Value</th><th>Unit</th><th>Effective</th></tr></thead>
-                        <tbody>
-                          {selectedSourceTerminalValues.map((value) => (
-                            <tr key={value.id}>
-                              <td>{value.marketKey}</td>
-                              <td>{value.terminalKey}</td>
-                              <td>{value.productKey}</td>
-                              <td>{value.vendorKey}</td>
-                              <td>{value.quoteCode}</td>
-                              <td>{value.value}</td>
-                              <td>{value.unit}</td>
-                              <td>{value.effectiveDate}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : <div className="price-tables-empty">No source rows matched terminal `{selectedTerminalKey || "all"}` for the selected snapshot.</div>}
-                </>
-              ) : <div className="price-tables-empty">Open the Inputs view, select a source snapshot, then return here to inspect the terminal-filtered OPIS rows.</div>}
-            </div>
-          ) : null}
-          {detailView === "logs" ? (
-            <div className="price-tables-shell">
-              <div className="price-tables-list">
-                {generatedOutputs.length ? generatedOutputs.map((output) => (
-                  <button key={output.id} type="button" className={`price-tables-list-item${output.id === selectedOutputId ? " price-tables-list-item-active" : ""}`} onClick={() => setSelectedOutputId(output.id)}>
-                    <strong>{output.customerName}</strong>
-                    <span>{output.status} | {formatMoney(output.regularTotal)} regular | {formatMoney(output.dieselTotal)} diesel</span>
-                  </button>
-                )) : <div className="price-tables-empty">No generated outputs match the current filter.</div>}
-              </div>
-              <div className="price-tables-form-stack">
-                <div className="price-tables-inline-head">
-                  <div className="price-tables-panel-kicker">Output Log</div>
-                  <div className="price-tables-segmented">
-                    <button type="button" className={outputScope === "date" ? "price-tables-segmented-active" : ""} onClick={() => setOutputScope("date")}>All Customers</button>
-                    <button type="button" className={outputScope === "customer" ? "price-tables-segmented-active" : ""} onClick={() => setOutputScope("customer")} disabled={!selectedCustomerId}>Selected Customer</button>
-                  </div>
-                </div>
-                {selectedOutputDetail ? (
-                  <>
-                    <div className="price-tables-detail-card">
-                      <div><strong>{selectedOutputDetail.customerName}</strong></div>
-                      <div>{selectedOutputDetail.status} | {selectedOutputDetail.pricingDate}</div>
-                      <div>Created {formatDateTime(selectedOutputDetail.createdAt)}</div>
-                      <div>{selectedOutputDetail.ruleSetName || "Multiple/family-specific rules"}</div>
-                    </div>
-                    {outputDetailPayload.missingInputs?.length ? <div className="price-tables-warning">{outputDetailPayload.missingInputs.map((item) => <div key={item.key}>{item.message}</div>)}</div> : null}
-                    <OutputCards outputs={outputDetailCards} fallbackStatus={selectedOutputDetail.status} />
-                    {outputDetailPayload.sourceSnapshots?.length ? (
-                      <div className="price-tables-subsection">
-                        <div className="price-tables-panel-kicker">Source Snapshot Group</div>
-                        <div className="price-tables-run-badges">{outputDetailPayload.sourceSnapshots.map((snapshot) => <span key={snapshot.id} className="price-tables-badge">{snapshot.sourceLabel || snapshot.sourceType}</span>)}</div>
-                      </div>
-                    ) : null}
-                  </>
-                ) : <div className="price-tables-empty">Select a generated output to inspect persisted totals and trace detail.</div>}
-              </div>
-            </div>
-          ) : null}
+          ) : <div className="price-tables-empty">Run preview to inspect active rule evaluation, taxes, and per-product trace output.</div>}
         </section>
       </div>
     </div>

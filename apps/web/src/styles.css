@@ -2336,6 +2336,14 @@ select {
   overflow-x: auto;
 }
 
+.price-tables-row-error td {
+  background: #fff0f0;
+}
+
+.price-tables-row-error td:first-child {
+  box-shadow: inset 4px 0 0 #c13d3d;
+}
+
 .price-tables-table input,
 .price-tables-table select,
 .price-tables-table textarea {
@@ -2407,6 +2415,11 @@ select {
   gap: 6px;
 }
 
+.price-tables-output-stack {
+  display: grid;
+  gap: 12px;
+}
+
 .price-tables-output-list {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
@@ -2436,9 +2449,148 @@ select {
   font-size: 13px;
 }
 
+.price-tables-basis-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.price-tables-basis-grid div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid #dce8ef;
+  background: #ffffff;
+}
+
+.price-tables-basis-action,
+.mobile-prices-basis-action,
+.mobile-prices-output-open,
+.price-tables-trace-toggle {
+  border: 1px solid #dce8ef;
+  background: #ffffff;
+  color: inherit;
+}
+
+.price-tables-basis-action,
+.mobile-prices-basis-action {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  text-align: left;
+}
+
+.price-tables-tone-spot {
+  background: #f4ecff !important;
+  border-color: #d8c2ff !important;
+}
+
+.price-tables-tone-rack {
+  background: #fff1e6 !important;
+  border-color: #f2cba9 !important;
+}
+
+.price-tables-inline-basis-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.price-tables-inline-basis {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #dce8ef;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.price-tables-inline-basis-sep {
+  color: #6d8492;
+  font-weight: 700;
+}
+
+.price-tables-basis-action-active,
+.mobile-prices-basis-action-active {
+  border-color: #86b2cb;
+  background: #eaf4f9;
+  box-shadow: 0 8px 20px rgba(56, 103, 129, 0.08);
+}
+
+.price-tables-basis-grid span {
+  color: #567386;
+  font-size: 12px;
+}
+
+.price-tables-basis-grid strong {
+  color: #173447;
+}
+
 .price-tables-trace {
   display: grid;
   gap: 8px;
+}
+
+.price-tables-trace-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #d3e2eb;
+  background: #f9fcfe;
+  display: grid;
+  gap: 12px;
+}
+
+.price-tables-trace-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.price-tables-trace-card-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.price-tables-trace-card-head span {
+  color: #5b778a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.price-tables-trace summary {
+  cursor: pointer;
+  color: #31566d;
+  font-weight: 700;
+  list-style: none;
+}
+
+.price-tables-trace-toggle {
+  cursor: pointer;
+  padding: 10px 12px;
+  border-radius: 14px;
+  color: #31566d;
+  font-weight: 700;
+  justify-self: start;
+}
+
+.price-tables-trace-context,
+.mobile-prices-trace-context {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #cfe0e9;
+  background: #f4f9fc;
+  color: #31566d;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.price-tables-trace summary::-webkit-details-marker {
+  display: none;
 }
 
 .price-tables-trace-row {
@@ -2446,11 +2598,82 @@ select {
   border-top: 1px solid #dce8ef;
 }
 
+.price-tables-trace-main {
+  display: grid;
+  gap: 4px;
+}
+
+.price-tables-trace-main small {
+  color: #5b778a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.price-tables-trace-main span {
+  color: #496577;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.price-tables-inline-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #31566d;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.price-tables-trace-row-success {
+  margin-top: 4px;
+  padding: 12px 0 0;
+  border-top-color: #abd4b8;
+}
+
+.price-tables-trace-row-success .price-tables-trace-main,
+.price-tables-trace-row-success em {
+  background: #edf8ef;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.price-tables-trace-row-spot .price-tables-trace-main,
+.price-tables-trace-row-spot em {
+  background: #f4ecff;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.price-tables-trace-row-rack .price-tables-trace-main,
+.price-tables-trace-row-rack em {
+  background: #fff1e6;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
 .price-tables-trace-row em {
   color: #173447;
   font-style: normal;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.price-tables-trace-row-indent-1 .price-tables-trace-main,
+.price-tables-trace-row-indent-1.mobile-prices-trace-row {
+  position: relative;
+  padding-left: 18px;
+}
+
+.price-tables-trace-row-indent-1 .price-tables-trace-main::before,
+.price-tables-trace-row-indent-1.mobile-prices-trace-row::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 14px;
+  width: 8px;
+  height: 1px;
+  background: #7f9aae;
 }
 
 .price-tables-empty {
@@ -2503,6 +2726,12 @@ select {
 .mobile-prices-customer {
   display: grid;
   gap: 6px;
+}
+
+.mobile-prices-basis-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .mobile-prices-nav,
@@ -2609,6 +2838,14 @@ select {
 
 .mobile-prices-output-grid {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.mobile-prices-output-open {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
 }
 
 .mobile-prices-output-head {

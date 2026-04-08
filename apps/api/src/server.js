@@ -13,7 +13,9 @@ const {
   createPricingSource,
   createPricingSourceValues,
   createPricingRule,
+  deleteCustomer,
   deleteCustomerContact,
+  deletePricingRule,
   getCustomerDetail,
   getGeneratedCustomerPriceDetail,
   getLatestCustomerPricingProfile,
@@ -200,6 +202,17 @@ const EIA_RETAIL_REGIONS = [
 ];
 
 const OPIS_API_BASE_URL = process.env.OPIS_API_BASE_URL || "https://rackapi.opisnet.com/api/v1";
+const OPIS_SPOT_API_BASE_URL = process.env.OPIS_SPOT_API_BASE_URL || "https://spotapi.opisnet.com/v1/api";
+const OPIS_RACK_TIMING_PREFERENCE = (process.env.OPIS_RACK_TIMING_PREFERENCE || "10,11,12,13")
+  .split(",")
+  .map((value) => String(value || "").trim())
+  .filter(Boolean);
+const OPIS_RACK_TIMING_LABELS = {
+  "10": "0645 ET",
+  "11": "0730 ET",
+  "12": "0900 ET",
+  "13": "1100 ET"
+};
 const OPIS_TIMING_OPTIONS = [
   { value: "0", label: "Live" },
   { value: "1", label: "Closing" },
@@ -213,13 +226,56 @@ const OPIS_FUEL_TYPE_OPTIONS = [
   { value: "biodiesel", label: "Biodiesel", opisValue: "5" }
 ];
 const OPIS_METADATA_CACHE_TTL_MS = 30 * 60 * 1000;
+const OPIS_RACK_SOURCE_LABEL = "OPIS Rack API First After 6AM ET";
+const OPIS_SPOT_SOURCE_LABEL = "OPIS Spot API Latest Published Prompt Average";
+const OPIS_RACK_VENDOR_KEYS = ["valero", "chevron", "shell", "psx", "tesoro", "marathon", "bp"];
+const OPIS_RACK_PRODUCT_KEYS = ["reg_87_carb", "premium_91_carb", "diesel_carb_ulsd"];
+const OPIS_SPOT_PRODUCT_CODES = {
+  reg_87_carb: {
+    productCode: "O1007NR",
+    productName: "OPIS San Francisco CARB RFG Regular Gasoline Prompt Average",
+    intradayProductCode: "O1007NR"
+  },
+  premium_91_carb: {
+    productCode: "O1007NW",
+    productName: "OPIS San Francisco CARB RFG Premium Gasoline Prompt Average",
+    intradayProductCode: "O1007NW"
+  },
+  diesel_carb_ulsd: {
+    productCode: "O1007G4",
+    productName: "OPIS San Francisco CARB Diesel Prompt Average",
+    intradayProductCode: "O1007G4"
+  }
+};
+const OPIS_RACK_MARKETS = [
+  { marketKey: "benicia", terminalKey: "benicia_terminal", aliases: ["BENICIA", "CONCORD"], rackCity: "Concord", spotMarket: "San Francisco" },
+  { marketKey: "stockton", terminalKey: "stockton_terminal", aliases: ["STOCKTON"], rackCity: "Stockton", spotMarket: "San Francisco" },
+  { marketKey: "sacramento", terminalKey: "sacramento_terminal", aliases: ["SACRAMENTO"], rackCity: "Sacramento", spotMarket: "San Francisco" },
+  { marketKey: "san_jose", terminalKey: "san_jose_terminal", aliases: ["SAN JOSE", "SANJOSE"], rackCity: "San Jose", spotMarket: "San Francisco" }
+];
 let opisMetadataCache = {
   expiresAt: 0,
   value: null
 };
 
+function localCalendarDate(date = new Date(), timeZone = process.env.APP_TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York") {
+  if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+    return date.trim();
+  }
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return `${year}-${month}-${day}`;
+}
+
 function formatIsoDate(date) {
-  return date.toISOString().slice(0, 10);
+  return localCalendarDate(date);
 }
 
 function normalizeEiaApiKey(rawValue) {
@@ -501,6 +557,36 @@ async function opisAuthenticate(user) {
   return token;
 }
 
+async function opisSpotAuthenticate(user) {
+  const credentials = await opisCredentials(user);
+  if (!credentials.username || !credentials.password) {
+    throw new Error("OPIS credentials are missing. Set OPIS_USERNAME and OPIS_PASSWORD.");
+  }
+
+  const response = await fetch(`${OPIS_SPOT_API_BASE_URL}/Account/authenticate`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      userName: credentials.username,
+      password: credentials.password
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`OPIS spot auth failed with status ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const token = typeof payload === "string" ? payload : payload?.accessToken || payload?.token || "";
+  if (!token) {
+    throw new Error("OPIS spot auth did not return a bearer token");
+  }
+  return token;
+}
+
 async function opisRequestRaw(path, token, queryParams = {}) {
   const url = new URL(`${OPIS_API_BASE_URL}/${path}`);
   for (const [key, value] of Object.entries(queryParams)) {
@@ -522,6 +608,27 @@ async function opisRequestRaw(path, token, queryParams = {}) {
   return response.json();
 }
 
+async function opisSpotRequest(path, token, queryParams = {}) {
+  const url = new URL(`${OPIS_SPOT_API_BASE_URL}/${path}`);
+  for (const [key, value] of Object.entries(queryParams)) {
+    if (value == null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      accept: "application/json",
+      Authorization: `bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`OPIS spot request failed (${response.status}) for ${path}`);
+  }
+
+  return response.json();
+}
+
 async function opisRequest(path, token, queryParams = {}) {
   const payload = await opisRequestRaw(path, token, queryParams);
   const statusCode = Number(payload?.StatusCode ?? payload?.statusCode ?? 0);
@@ -536,6 +643,391 @@ function averageOpisPrice(rows, fuelType) {
   const filtered = rows.filter((row) => !fuelType || String(row.FuelType).toLowerCase() === fuelType.toLowerCase());
   if (!filtered.length) return null;
   return Number((filtered.reduce((sum, row) => sum + Number(row.Price || 0), 0) / filtered.length).toFixed(2));
+}
+
+function normalizeOpisText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ");
+}
+
+function opisSupplierPriceRows(payload) {
+  return payload?.data?.supplierPrices
+    || payload?.data?.SupplierPrices
+    || payload?.Data?.supplierPrices
+    || payload?.Data?.SupplierPrices
+    || [];
+}
+
+function opisRackTimestamp(row) {
+  const moveDate = row?.moveDate || row?.MoveDate;
+  const effectiveDate = row?.effectiveDate || row?.EffectiveDate;
+  const moveMs = moveDate ? Date.parse(moveDate) : Number.NaN;
+  if (Number.isFinite(moveMs)) return moveMs;
+  const effectiveMs = effectiveDate ? Date.parse(effectiveDate) : Number.NaN;
+  return Number.isFinite(effectiveMs) ? effectiveMs : 0;
+}
+
+function mapOpisRackMarket(row) {
+  const cityName = normalizeOpisText(row?.cityName || row?.CityName);
+  return OPIS_RACK_MARKETS.find((market) => market.aliases.some((alias) => cityName.includes(alias))) || null;
+}
+
+function mapOpisRackVendor(row) {
+  const supplierName = normalizeOpisText(row?.supplierName || row?.SupplierName);
+  if (!supplierName) return null;
+  if (supplierName.includes("VALERO")) return "valero";
+  if (supplierName.includes("CHEVRON")) return "chevron";
+  if (supplierName.includes("SHELL")) return "shell";
+  if (supplierName.includes("PHILLIPS") || supplierName.includes("PHILLIP") || supplierName.includes("P66") || supplierName === "76") return "psx";
+  if (supplierName.includes("TESORO") || supplierName.includes("ARCO")) return "tesoro";
+  if (supplierName.includes("MARATHON")) return "marathon";
+  if (supplierName.includes("BP")) return "bp";
+  return null;
+}
+
+function mapOpisRackProduct(row) {
+  const fuelType = normalizeOpisText(row?.fuelType || row?.FuelType);
+  const productName = normalizeOpisText(row?.productName || row?.ProductName);
+  const actualProduct = normalizeOpisText(row?.actualProduct || row?.ActualProduct);
+  const octane = toNumber(row?.octane || row?.Octane);
+
+  if (fuelType.includes("DIESEL") || fuelType.includes("DISTILLATE")) {
+    return "diesel_carb_ulsd";
+  }
+  if (!fuelType.includes("GASOLINE")) {
+    return null;
+  }
+  if (Number.isFinite(octane) && octane >= 90) {
+    return "premium_91_carb";
+  }
+  if (Number.isFinite(octane) && octane >= 86 && octane < 90) {
+    return "reg_87_carb";
+  }
+  if (productName.includes("PREM") || actualProduct.includes("PREM")) {
+    return "premium_91_carb";
+  }
+  if (productName.includes("REG") || actualProduct.includes("REG") || productName.includes("UNL")) {
+    return "reg_87_carb";
+  }
+  return null;
+}
+
+function buildOpisRackSourceValues(rows, pricingDate) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const market = mapOpisRackMarket(row);
+    const vendorKey = mapOpisRackVendor(row);
+    const productKey = mapOpisRackProduct(row);
+    const rawPrice = toNumber(row?.price || row?.Price);
+    if (!market || !vendorKey || !productKey || !Number.isFinite(rawPrice)) continue;
+
+    const value = Number((rawPrice / 100).toFixed(4));
+    const key = `${market.marketKey}|${productKey}|${vendorKey}`;
+    const current = grouped.get(key);
+    const next = {
+      marketKey: market.marketKey,
+      terminalKey: market.terminalKey,
+      productKey,
+      vendorKey,
+      quoteCode: "OPIS_RACK_API",
+      value,
+      unit: "usd_gal",
+      effectiveDate: pricingDate,
+      metadata: {
+        source: "opis_rack_api",
+        supplierName: row?.supplierName || row?.SupplierName || "",
+        cityName: row?.cityName || row?.CityName || "",
+        productName: row?.productName || row?.ProductName || "",
+        actualProduct: row?.actualProduct || row?.ActualProduct || "",
+        octane: toNumber(row?.octane || row?.Octane),
+        opisPrice: rawPrice,
+        opisCurrencyUnit: row?.currencyUnit || row?.CurrencyUnit || "",
+        effectiveDate: row?.effectiveDate || row?.EffectiveDate || null,
+        moveDate: row?.moveDate || row?.MoveDate || null
+      }
+    };
+    if (!current) {
+      grouped.set(key, next);
+      continue;
+    }
+    const currentTimestamp = opisRackTimestamp(current.metadata || {});
+    const nextTimestamp = opisRackTimestamp(next.metadata || {});
+    if (nextTimestamp > currentTimestamp || (nextTimestamp === currentTimestamp && next.value < current.value)) {
+      grouped.set(key, next);
+    }
+  }
+  return [...grouped.values()];
+}
+
+function opisSummaryRows(payload) {
+  return payload?.data?.summaries
+    || payload?.data?.Summaries
+    || payload?.Data?.summaries
+    || payload?.Data?.Summaries
+    || [];
+}
+
+function buildOpisRackAverageValues(rows, pricingDate) {
+  const values = [];
+  for (const row of rows) {
+    const market = mapOpisRackMarket(row);
+    const productKey = mapOpisRackProduct(row);
+    const rawPrice = toNumber(row?.price || row?.Price);
+    if (!market || !productKey || !Number.isFinite(rawPrice)) continue;
+    values.push({
+      marketKey: market.marketKey,
+      terminalKey: market.terminalKey,
+      productKey,
+      vendorKey: "",
+      quoteCode: "OPIS_RACK_API_AVG",
+      value: Number((rawPrice / 100).toFixed(4)),
+      unit: "usd_gal",
+      effectiveDate: pricingDate,
+      metadata: {
+        source: "opis_rack_api_summary",
+        cityName: row?.cityName || row?.CityName || "",
+        productName: row?.productName || row?.ProductName || "",
+        actualProduct: row?.actualProduct || row?.ActualProduct || "",
+        effectiveDate: row?.effectiveDate || row?.EffectiveDate || null,
+        benchmarkTypeName: row?.benchmarkTypeName || row?.BenchmarkTypeName || "",
+        benchmarkTimingType: row?.benchmarkTimingType || row?.BenchmarkTimingType || "",
+        selectedTimingLabel: row?.benchmarkTimingType || row?.BenchmarkTimingType || ""
+      }
+    });
+  }
+  const deduped = new Map();
+  for (const value of values) {
+    const key = `${value.marketKey}|${value.productKey}`;
+    if (!deduped.has(key)) deduped.set(key, value);
+  }
+  return [...deduped.values()];
+}
+
+function upsertEarliestRackValues(target, values) {
+  for (const value of values) {
+    const key = `${value.marketKey}|${value.productKey}|${value.vendorKey}`;
+    if (!target.has(key)) {
+      target.set(key, value);
+    }
+  }
+}
+
+function buildOpisSpotSourceValues(rows, pricingDate, options = {}) {
+  const rowsByCode = new Map(rows.map((row) => [String(row?.ProductCode || "").trim().toUpperCase(), row]));
+  const output = [];
+  const sourceMode = String(options.sourceMode || "latest_prompt_average").trim().toLowerCase();
+  const selectedTimingLabel = options.selectedTimingLabel || (sourceMode === "intraday" ? "Intraday Spot" : "Latest Published Spot");
+  const sourceEndpoint = options.sourceEndpoint || (sourceMode === "intraday" ? "GET /api/SpotValues/Intraday" : "GET /api/SpotValues");
+  const fetchedAt = options.fetchedAt || new Date().toISOString();
+  for (const market of OPIS_RACK_MARKETS) {
+    for (const [productKey, config] of Object.entries(OPIS_SPOT_PRODUCT_CODES)) {
+      const row = rowsByCode.get((sourceMode === "intraday" ? (config.intradayProductCode || config.productCode) : config.productCode).toUpperCase());
+      const rawValue = toNumber(row?.Value);
+      if (!row || !Number.isFinite(rawValue)) continue;
+      output.push({
+        marketKey: market.marketKey,
+        terminalKey: market.terminalKey,
+        productKey,
+        vendorKey: "",
+        quoteCode: "OPIS_SPOT_API",
+        value: Number((rawValue / 100).toFixed(4)),
+        unit: "usd_gal",
+        effectiveDate: row?.Date || pricingDate,
+          metadata: {
+            source: "opis_spot_api",
+            sourceMode,
+            sourceEndpoint,
+            fetchedAt,
+            associatedRackCity: market.rackCity || "",
+            associatedSpotMarket: market.spotMarket || "",
+            productCode: row?.ProductCode || (sourceMode === "intraday" ? (config.intradayProductCode || config.productCode) : config.productCode),
+            product: row?.Product || "",
+            geography: row?.Geography || "",
+          valueType: row?.ValueType || "",
+          terms: row?.Terms || "",
+          unit: row?.Unit || "",
+          longLabel: row?.LongLabel || config.productName,
+          shortLabel: row?.ShortLabel || "",
+          effectiveDate: row?.Date || pricingDate,
+          selectedTimingLabel
+        }
+      });
+    }
+  }
+  return output;
+}
+
+async function refreshOpisSpotPricingSources({ user, pricingDate }) {
+  if (!user?.jobberId) {
+    const error = new Error("No jobber selected");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!(await hasOpisCredentials(user))) {
+    const error = new Error("OPIS credentials are missing. Set OPIS_USERNAME and OPIS_PASSWORD.");
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const normalizedPricingDate = formatIsoDate(new Date(pricingDate || new Date()));
+  const token = await opisSpotAuthenticate(user);
+  const fetchedAt = new Date().toISOString();
+  const promptAverageProductCodes = Object.values(OPIS_SPOT_PRODUCT_CODES).map((item) => item.productCode).join(",");
+  const payload = await opisSpotRequest("SpotValues", token, {
+    productCodes: promptAverageProductCodes,
+    retrieveLatestData: "true",
+    date: normalizedPricingDate,
+    showMinimal: "false"
+  });
+  const values = buildOpisSpotSourceValues(Array.isArray(payload) ? payload : [], normalizedPricingDate, {
+    sourceMode: "latest_prompt_average",
+    selectedTimingLabel: "Latest Published Prompt Average",
+    sourceEndpoint: "GET /api/SpotValues",
+    fetchedAt
+  });
+  const notes = `OPIS latest published prompt averages for ${normalizedPricingDate}: ${promptAverageProductCodes}.`;
+  if (!values.length) {
+    const error = new Error(`OPIS Spot API returned no usable spot rows for ${normalizedPricingDate}.`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const existingSnapshots = await listPricingSources(user.jobberId, { pricingDate: normalizedPricingDate });
+  let spotSnapshot = existingSnapshots.find((snapshot) => snapshot.sourceLabel === OPIS_SPOT_SOURCE_LABEL) || null;
+  if (!spotSnapshot) {
+    spotSnapshot = await createPricingSource(user.jobberId, user.userId, {
+      pricingDate: normalizedPricingDate,
+      sourceType: "opis",
+      sourceLabel: OPIS_SPOT_SOURCE_LABEL,
+      status: "ready",
+      receivedAt: new Date().toISOString(),
+      notes: "Latest published OPIS prompt averages by product code."
+    });
+  }
+
+  await query(
+    `DELETE FROM pricing_source_values v
+     USING pricing_source_snapshots s
+     WHERE v.snapshot_id = s.id
+       AND s.jobber_id = $1
+       AND s.pricing_date = $2
+       AND v.quote_code = 'OPIS_SPOT_API'
+       AND v.product_key = ANY($3::text[])`,
+    [user.jobberId, normalizedPricingDate, Object.keys(OPIS_SPOT_PRODUCT_CODES)]
+  );
+
+  await createPricingSourceValues(user.jobberId, spotSnapshot.id, values);
+  await query(
+    `UPDATE pricing_source_snapshots
+     SET notes=$1
+     WHERE id=$2`,
+    [
+      notes,
+      spotSnapshot.id
+    ]
+  );
+  return getPricingSourceDetail(user.jobberId, spotSnapshot.id);
+}
+
+async function refreshOpisRackPricingSources({ user, pricingDate }) {
+  if (!user?.jobberId) {
+    const error = new Error("No jobber selected");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!(await hasOpisCredentials(user))) {
+    const error = new Error("OPIS credentials are missing. Set OPIS_USERNAME and OPIS_PASSWORD.");
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const normalizedPricingDate = formatIsoDate(new Date(pricingDate || new Date()));
+  const today = formatIsoDate(new Date());
+  const token = await opisAuthenticate(user);
+  const selectedValues = new Map();
+  const selectedAverageValues = new Map();
+  const timingsUsed = new Set();
+  for (const timing of OPIS_RACK_TIMING_PREFERENCE) {
+    const requestQuery = {
+      timing,
+      State: "CA",
+      FuelTypes: "1,2",
+      priceType: "2",
+      reportType: "1",
+      Branded: "U",
+      includePremium: "true",
+      ...(normalizedPricingDate === today ? {} : {
+        HistoryStartDate: normalizedPricingDate,
+        HistoryEndDate: normalizedPricingDate
+      })
+    };
+    const [supplierPricesPayload, summaryPayload] = await Promise.all([
+      opisRequestRaw("SupplierPrices", token, requestQuery),
+      opisRequestRaw("Summary", token, requestQuery)
+    ]);
+    const valuesForTiming = buildOpisRackSourceValues(opisSupplierPriceRows(supplierPricesPayload), normalizedPricingDate);
+    const averageValuesForTiming = buildOpisRackAverageValues(opisSummaryRows(summaryPayload), normalizedPricingDate);
+    if (valuesForTiming.length) {
+      upsertEarliestRackValues(selectedValues, valuesForTiming);
+      timingsUsed.add(timing);
+    }
+    if (averageValuesForTiming.length) {
+      for (const value of averageValuesForTiming) {
+        const key = `${value.marketKey}|${value.productKey}`;
+        if (!selectedAverageValues.has(key)) {
+          selectedAverageValues.set(key, value);
+        }
+      }
+      timingsUsed.add(timing);
+    }
+  }
+
+  const values = [...selectedValues.values(), ...selectedAverageValues.values()];
+  if (!values.length) {
+    const error = new Error(`OPIS Rack API returned no usable rack supplier rows for ${normalizedPricingDate}.`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const existingSnapshots = await listPricingSources(user.jobberId, { pricingDate: normalizedPricingDate });
+  let rackSnapshot = existingSnapshots.find((snapshot) => snapshot.sourceLabel === OPIS_RACK_SOURCE_LABEL) || null;
+  if (!rackSnapshot) {
+    rackSnapshot = await createPricingSource(user.jobberId, user.userId, {
+      pricingDate: normalizedPricingDate,
+      sourceType: "opis",
+      sourceLabel: OPIS_RACK_SOURCE_LABEL,
+      status: "ready",
+      receivedAt: new Date().toISOString(),
+      notes: "Rack supplier rows refreshed from the first available OPIS Rack API snapshots after 6:00 AM ET."
+    });
+  }
+
+  await query(
+    `DELETE FROM pricing_source_values v
+     USING pricing_source_snapshots s
+     WHERE v.snapshot_id = s.id
+       AND s.jobber_id = $1
+       AND s.pricing_date = $2
+       AND (
+         (v.vendor_key = ANY($3::text[]) AND v.product_key = ANY($4::text[]))
+         OR v.quote_code = 'OPIS_RACK_API_AVG'
+       )`,
+    [user.jobberId, normalizedPricingDate, OPIS_RACK_VENDOR_KEYS, OPIS_RACK_PRODUCT_KEYS]
+  );
+
+  await createPricingSourceValues(user.jobberId, rackSnapshot.id, values);
+  await query(
+    `UPDATE pricing_source_snapshots
+     SET notes=$1
+     WHERE id=$2`,
+    [
+      `Rack supplier rows refreshed from the first available OPIS Rack API snapshots after 6:00 AM ET. Timings used: ${[...timingsUsed].map((timing) => OPIS_RACK_TIMING_LABELS[timing] || timing).join(", ") || "none"}.`,
+      rackSnapshot.id
+    ]
+  );
+  return getPricingSourceDetail(user.jobberId, rackSnapshot.id);
 }
 
 function averageMappedOpisPrice(rows, fuelType) {
@@ -2491,6 +2983,18 @@ app.patch(
   })
 );
 
+app.delete(
+  "/customers/:id",
+  requireAuth,
+  requireRole("manager"),
+  asyncHandler(async (req, res) => {
+    if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
+    const deleted = await deleteCustomer(req.user.jobberId, req.params.id);
+    if (deleted === undefined) return res.status(404).json({ error: "Customer not found" });
+    res.json({ ok: true });
+  })
+);
+
 app.get(
   "/customers/:id/pricing-profile",
   requireAuth,
@@ -2681,6 +3185,18 @@ app.patch(
   })
 );
 
+app.delete(
+  "/pricing/rules/:id",
+  requireAuth,
+  requireRole("manager"),
+  asyncHandler(async (req, res) => {
+    if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
+    const deleted = await deletePricingRule(req.user.jobberId, req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Pricing rule not found" });
+    res.status(204).end();
+  })
+);
+
 app.put(
   "/pricing/rules/:id/components",
   requireAuth,
@@ -2715,6 +3231,14 @@ app.post(
     if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
     const customerId = pricingText(req.body?.customerId);
     if (!customerId) return res.status(400).json({ error: "customerId is required" });
+    await refreshOpisSpotPricingSources({
+      user: req.user,
+      pricingDate: req.body?.pricingDate
+    });
+    await refreshOpisRackPricingSources({
+      user: req.user,
+      pricingDate: req.body?.pricingDate
+    });
     const preview = await previewCustomerPricing({
       jobberId: req.user.jobberId,
       customerId,
@@ -2732,6 +3256,14 @@ app.post(
   asyncHandler(async (req, res) => {
     if (!req.user.jobberId) return res.status(400).json({ error: "No jobber selected" });
     const customerId = pricingText(req.body?.customerId) || null;
+    await refreshOpisSpotPricingSources({
+      user: req.user,
+      pricingDate: req.body?.pricingDate
+    });
+    await refreshOpisRackPricingSources({
+      user: req.user,
+      pricingDate: req.body?.pricingDate
+    });
     const result = await generateCustomerPricingRun({
       jobberId: req.user.jobberId,
       userId: req.user.userId,

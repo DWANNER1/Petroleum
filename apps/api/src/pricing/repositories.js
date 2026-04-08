@@ -37,6 +37,7 @@ const COMPONENT_SOURCE_KINDS = new Set([
   "tax_schedule",
   "customer_profile",
   "vendor_min",
+  "spot_or_rack_best",
   "constant",
   "default",
   "derived_component"
@@ -179,6 +180,9 @@ function pricingSourceValueRow(row) {
     value: row.value,
     unit: row.unit,
     effectiveDate: row.effectiveDate,
+    sourceType: row.sourceType,
+    sourceLabel: row.sourceLabel,
+    sourceStatus: row.sourceStatus,
     metadata: row.metadata || {},
     createdAt: row.createdAt
   };
@@ -490,6 +494,13 @@ async function deleteCustomerContact(jobberId, customerId, contactId) {
   const customer = await getCustomerOwnedByJobber(jobberId, customerId);
   if (!customer) return undefined;
   const result = await query(`DELETE FROM customer_contacts WHERE id=$1 AND customer_id=$2`, [contactId, customerId]);
+  return result.rowCount > 0;
+}
+
+async function deleteCustomer(jobberId, customerId) {
+  const customer = await getCustomerOwnedByJobber(jobberId, customerId);
+  if (!customer) return undefined;
+  const result = await query(`DELETE FROM customers WHERE id=$1 AND jobber_id=$2`, [customerId, jobberId]);
   return result.rowCount > 0;
 }
 
@@ -835,6 +846,30 @@ async function getLatestPricingSourceSnapshotDate(jobberId, pricingDate) {
   return result.rows[0]?.pricingDate || null;
 }
 
+async function listLatestPricingSourceSnapshotsBySource(jobberId, pricingDate) {
+  const effectiveDate = pricingNullableDate(pricingDate);
+  if (!effectiveDate) return [];
+  const result = await query(
+    `SELECT DISTINCT ON (source_type, source_label)
+      id,
+      jobber_id AS "jobberId",
+      pricing_date AS "pricingDate",
+      source_type AS "sourceType",
+      source_label AS "sourceLabel",
+      status,
+      received_at AS "receivedAt",
+      created_at AS "createdAt",
+      created_by AS "createdBy",
+      notes
+     FROM pricing_source_snapshots
+     WHERE jobber_id=$1
+       AND pricing_date <= $2
+     ORDER BY source_type ASC, source_label ASC, pricing_date DESC, created_at DESC`,
+    [jobberId, effectiveDate]
+  );
+  return result.rows.map(pricingSourceSnapshotRow);
+}
+
 async function listPricingSourceSnapshotsForDateOrLatest(jobberId, pricingDate) {
   const effectiveDate = pricingNullableDate(pricingDate);
   if (!effectiveDate) {
@@ -846,12 +881,20 @@ async function listPricingSourceSnapshotsForDateOrLatest(jobberId, pricingDate) 
     };
   }
   const exactSnapshots = await listPricingSourceSnapshotsForDate(jobberId, effectiveDate);
-  if (exactSnapshots.length) {
+  const exactKeys = new Set(exactSnapshots.map((snapshot) => `${snapshot.sourceType}::${snapshot.sourceLabel}`));
+  const latestSnapshots = await listLatestPricingSourceSnapshotsBySource(jobberId, effectiveDate);
+  const supplementedSnapshots = latestSnapshots.filter((snapshot) => !exactKeys.has(`${snapshot.sourceType}::${snapshot.sourceLabel}`));
+  const mergedSnapshots = [...exactSnapshots, ...supplementedSnapshots];
+  if (mergedSnapshots.length) {
+    const resolvedPricingDate = mergedSnapshots.reduce(
+      (latest, snapshot) => (!latest || String(snapshot.pricingDate || "") > String(latest) ? snapshot.pricingDate : latest),
+      null
+    );
     return {
       requestedPricingDate: effectiveDate,
-      resolvedPricingDate: effectiveDate,
-      usedFallbackDate: false,
-      snapshots: exactSnapshots
+      resolvedPricingDate,
+      usedFallbackDate: mergedSnapshots.some((snapshot) => snapshot.pricingDate !== effectiveDate),
+      snapshots: mergedSnapshots
     };
   }
   const fallbackDate = await getLatestPricingSourceSnapshotDate(jobberId, effectiveDate);
@@ -1060,21 +1103,25 @@ async function listPricingSourceValuesForSnapshots(snapshotIds) {
   if (!Array.isArray(snapshotIds) || snapshotIds.length === 0) return [];
   const result = await query(
     `SELECT
-      id,
-      snapshot_id AS "snapshotId",
-      market_key AS "marketKey",
-      terminal_key AS "terminalKey",
-      product_key AS "productKey",
-      vendor_key AS "vendorKey",
-      quote_code AS "quoteCode",
-      value,
-      unit,
-      effective_date AS "effectiveDate",
-      metadata_json AS "metadata",
-      created_at AS "createdAt"
-     FROM pricing_source_values
-     WHERE snapshot_id = ANY($1::text[])
-     ORDER BY snapshot_id ASC, market_key ASC, terminal_key ASC, product_key ASC, vendor_key ASC, quote_code ASC, created_at ASC`,
+      v.id,
+      v.snapshot_id AS "snapshotId",
+      v.market_key AS "marketKey",
+      v.terminal_key AS "terminalKey",
+      v.product_key AS "productKey",
+      v.vendor_key AS "vendorKey",
+      v.quote_code AS "quoteCode",
+      v.value,
+      v.unit,
+      v.effective_date AS "effectiveDate",
+      v.metadata_json AS "metadata",
+      v.created_at AS "createdAt",
+      s.source_type AS "sourceType",
+      s.source_label AS "sourceLabel",
+      s.status AS "sourceStatus"
+     FROM pricing_source_values v
+     JOIN pricing_source_snapshots s ON s.id = v.snapshot_id
+     WHERE v.snapshot_id = ANY($1::text[])
+     ORDER BY v.snapshot_id ASC, v.market_key ASC, v.terminal_key ASC, v.product_key ASC, v.vendor_key ASC, v.quote_code ASC, v.created_at ASC`,
     [snapshotIds]
   );
   return result.rows.map(pricingSourceValueRow);
@@ -1268,6 +1315,13 @@ async function updatePricingRule(jobberId, ruleSetId, input) {
     ]
   );
   return getPricingRuleDetail(jobberId, ruleSetId);
+}
+
+async function deletePricingRule(jobberId, ruleSetId) {
+  const ruleSet = await getPricingRuleOwnedByJobber(jobberId, ruleSetId);
+  if (!ruleSet) return false;
+  await query(`DELETE FROM pricing_rule_sets WHERE id=$1 AND jobber_id=$2`, [ruleSetId, jobberId]);
+  return true;
 }
 
 async function savePricingRuleComponents(jobberId, ruleSetId, components) {
@@ -1534,7 +1588,9 @@ module.exports = {
   createPricingSource,
   createPricingSourceValues,
   createPricingRule,
+  deleteCustomer,
   deleteCustomerContact,
+  deletePricingRule,
   getCustomerDetail,
   getCustomerPricingProfileForDate,
   getLatestCustomerPricingProfile,

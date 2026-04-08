@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 
 const PRODUCT_FAMILIES = ["regular", "mid", "premium", "diesel"];
+const VISIBLE_PRODUCT_FAMILIES = ["regular", "premium", "diesel"];
+const PROFILE_RULE_FIELDS = ["distributionLabel", "gasPrepay", "dieselPrepay", "storageFee", "gasFedExcise", "gasStateExcise", "dieselFedExcise", "dieselStateExcise", "gasSalesTaxRate", "dieselSalesTaxRate", "gasRetailMargin", "dieselRetailMargin"];
 const MOBILE_SECTIONS = ["run", "preview", "results", "source"];
 
 function formatMoney(value) {
@@ -11,23 +13,247 @@ function formatMoney(value) {
 function formatDateTime(value) {
   return value ? new Date(value).toLocaleString() : "n/a";
 }
+function formatPercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "n/a";
+  const percent = numeric <= 1 ? numeric * 100 : numeric;
+  return `${percent.toFixed(percent % 1 === 0 ? 0 : percent < 10 ? 3 : 2)}%`;
+}
+
+function localDateInputValue(value = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(value));
+}
+
+function productFamilyLabel(value) {
+  if (value === "regular") return "REG 87";
+  if (value === "premium") return "PRE 91";
+  if (value === "diesel") return "Diesel";
+  if (value === "mid") return "MID 89";
+  return value;
+}
+
+function traceAmount(item) {
+  return item.contribution != null ? formatMoney(item.contribution) : item.value != null ? formatMoney(item.value) : "n/a";
+}
+
+function basisTraceItem(output) {
+  return (output.trace || []).find((item) => Number.isFinite(item?.spotValue) || Number.isFinite(item?.rackValue)) || null;
+}
+
+function derivedBasisTotals(output) {
+  if (output?.basisComparison) {
+    return {
+      spotTotal: output.basisComparison.spotTotal,
+      rackTotal: output.basisComparison.rackTotal,
+      difference: output.basisComparison.difference
+    };
+  }
+  const basis = basisTraceItem(output);
+  if (!basis || !Number.isFinite(output?.totalPrice) || !Number.isFinite(basis.rawValue)) return null;
+  const current = Number(output.totalPrice);
+  const selectedBasis = Number(basis.rawValue);
+  const spotTotal = Number.isFinite(basis.spotValue) ? Number((current - selectedBasis + Number(basis.spotValue)).toFixed(4)) : null;
+  const rackTotal = Number.isFinite(basis.rackValue) ? Number((current - selectedBasis + Number(basis.rackValue)).toFixed(4)) : null;
+  const difference = spotTotal != null && rackTotal != null ? Number((spotTotal - rackTotal).toFixed(4)) : null;
+  return { spotTotal, rackTotal, difference };
+}
+function defaultTraceMode(output) {
+  const recommendation = String(basisTraceItem(output)?.recommendation || "").trim().toLowerCase();
+  return recommendation === "spot" ? "spot" : "rack";
+}
+function traceAmountForMode(item, mode) {
+  if ((mode === "spot" || mode === "rack") && Number.isFinite(item?.spotValue) && Number.isFinite(item?.rackValue)) {
+    return formatMoney(mode === "spot" ? item.spotValue : item.rackValue);
+  }
+  return traceAmount(item);
+}
+function traceDetailForMode(item, mode) {
+  if ((mode === "spot" || mode === "rack") && (Number.isFinite(item?.spotValue) || Number.isFinite(item?.rackValue))) {
+    const chosen = mode === "spot" ? item.spotValue : item.rackValue;
+    const alternate = mode === "spot" ? item.rackValue : item.spotValue;
+    const chosenLabel = mode === "spot" ? "Spot" : "Rack";
+    const alternateLabel = mode === "spot" ? "Rack" : "Spot";
+    return `${item.detail} | Using ${chosenLabel} ${formatMoney(chosen)}${Number.isFinite(alternate) ? ` | ${alternateLabel} ${formatMoney(alternate)}` : ""}`;
+  }
+  return item.detail;
+}
+function traceModeSummary(output, mode) {
+  const basis = basisTraceItem(output);
+  const derived = derivedBasisTotals(output);
+  if (!basis || (mode !== "spot" && mode !== "rack")) return "";
+  const derivedTotal = mode === "spot" ? derived?.spotTotal : derived?.rackTotal;
+  const chosenBasis = mode === "spot" ? basis.spotValue : basis.rackValue;
+  const profileTarget = basis.terminalKey || basis.marketKey || "selected profile";
+  return `${mode === "spot" ? "Derived Spot" : "Derived Rack"} recalculates the finished price with a ${mode} basis of ${formatMoney(chosenBasis)} for a total of ${formatMoney(derivedTotal)} using ${profileTarget}.`;
+}
+function formatBasisObserved(output, mode) {
+  const comparison = output?.basisComparison || {};
+  const observedAt = mode === "spot" ? comparison.spotObservedAt : comparison.rackObservedAt;
+  const timing = mode === "spot" ? comparison.spotTimingLabel : comparison.rackTimingLabel;
+  const city = mode === "spot" ? comparison.spotSourceCity : comparison.rackSourceCity;
+  const supplier = mode === "spot" ? comparison.spotSourceSupplier : comparison.rackSourceSupplier;
+  const pieces = [timing, city, supplier, observedAt ? formatDateTime(observedAt) : ""].filter(Boolean);
+  return pieces.join(" | ");
+}
+function spotProductCodeForFamily(family) {
+  if (family === "regular") return "O1007NR";
+  if (family === "premium") return "O1007NW";
+  if (family === "diesel") return "O1007G4";
+  return "";
+}
+function spotMarketReferenceForFamily(family) {
+  if (family === "regular") return "San Francisco CARB RFG Regular Average";
+  if (family === "premium") return "San Francisco CARB RFG Premium Average";
+  if (family === "diesel") return "San Francisco CARB Diesel Average";
+  return "OPIS market average";
+}
+function basisValidationLines(output, mode) {
+  const basis = basisTraceItem(output);
+  const comparison = output?.basisComparison || {};
+  const family = output?.productFamily || "";
+  if (!basis || (mode !== "spot" && mode !== "rack")) return [];
+  if (mode === "spot") {
+    const code = spotProductCodeForFamily(family);
+    const endpoint = comparison.spotSourceEndpoint || "GET /api/SpotValues";
+    const sourceMode = comparison.spotSourceMode === "intraday"
+      ? "Intraday spot"
+      : comparison.spotSourceMode === "latest_prompt_average"
+        ? "Latest published prompt average"
+        : "Spot price";
+    return [
+      `Source API: OPIS Spot API -> ${endpoint}`,
+      `Selection rule: ${sourceMode} for ${productFamilyLabel(family)}`,
+      `Report match line: ${spotMarketReferenceForFamily(family)}`,
+      `Product code: ${code || "n/a"}`,
+      `Market: ${comparison.spotSourceCity || "San Francisco"}`,
+      `Timing label: ${comparison.spotTimingLabel || "Latest Spot"}`,
+      `Published date: ${comparison.spotPublishedDate ? formatDateTime(comparison.spotPublishedDate) : "n/a"}`,
+      `Fetched at: ${comparison.spotFetchedAt ? formatDateTime(comparison.spotFetchedAt) : "n/a"}`,
+      `Validation keys: market line, product code, and published date should all match the OPIS spot report`
+    ];
+  }
+  return [
+    `Source API: OPIS Rack API -> GET /Summary`,
+    `Selection rule: first available unbranded net average after 6:00 AM ET`,
+    `Market: ${comparison.rackSourceCity || "n/a"}`,
+    `Supplier: ${comparison.rackSourceSupplier || "n/a"}`,
+    `Timing label: ${comparison.rackTimingLabel || "n/a"}`,
+    `Published date: ${comparison.rackPublishedDate ? formatDateTime(comparison.rackPublishedDate) : "n/a"}`,
+    `Fetched at: ${comparison.rackFetchedAt ? formatDateTime(comparison.rackFetchedAt) : "n/a"}`,
+    `Invoice match keys: supplier, terminal/market, product family, and BOL/report date should line up with the supplier invoice`
+  ];
+}
+
+function traceLabel(item) {
+  const label = item.label || item.kind || item.componentKey;
+  if (label === "Lowest Rack") return "Lowest Rack Input";
+  if (label === "Lowest of Day Basis" || label === "Spot or Rack") return "Spot or Rack";
+  if (item.kind === "active_taxes") return "Taxes Applied";
+  return label;
+}
+function traceLabelForMode(item, mode) {
+  const label = traceLabel(item);
+  if (label === "Spot or Rack") {
+    return mode === "spot" ? "Spot Basis" : mode === "rack" ? "Rack Basis" : label;
+  }
+  return label;
+}
+function traceIndentLevel(item, mode) {
+  const label = traceLabelForMode(item, mode);
+  if (/prepay/i.test(label)) return 1;
+  if (/(federal|fed excise|state excise|sales tax amt|sales tax amount|sales tax rate|storage fee|storage fees|freight)/i.test(label)) return 1;
+  return 0;
+}
+function traceDisplayAmount(item, mode) {
+  const label = traceLabelForMode(item, mode);
+  if (/sales tax rate/i.test(label)) {
+    const value = item.contribution != null ? item.contribution : item.value;
+    return formatPercent(value);
+  }
+  return traceAmountForMode(item, mode);
+}
+const TRACE_LABELS_TO_HIDE = new Set([
+  "Contract Minus",
+  "Freight",
+  "Rack Margin",
+  "Tax",
+  "Taxes Applied",
+  "Discount",
+  "Distribution Terminal",
+  "Today's Cost",
+  "discount_not_applied"
+]);
+const TRACE_KINDS_TO_HIDE = new Set(["active_taxes", "discount_not_applied"]);
+function filteredTraceItems(output) {
+  return (output?.trace || []).filter((item) => {
+    const label = traceLabel(item);
+    const kind = String(item?.kind || "");
+    return !TRACE_LABELS_TO_HIDE.has(label) && !TRACE_KINDS_TO_HIDE.has(kind);
+  });
+}
+function traceSourceText(item) {
+  return String(item?.sourcePath || "").trim();
+}
+function basisCellTone(kind, recommendation) {
+  if (kind === "spot") return "price-tables-tone-spot";
+  if (kind === "rack") return "price-tables-tone-rack";
+  if (kind === "winner") return recommendation === "spot" ? "price-tables-tone-spot" : recommendation === "rack" ? "price-tables-tone-rack" : "";
+  return "";
+}
 
 function sourceValueMatchesTerminal(value, terminalKey) {
   if (!terminalKey) return true;
   return String(value?.terminalKey || "").trim() === terminalKey;
 }
 
-function OutputCard({ output, fallbackStatus, onOpen }) {
+function latestGeneratedOutputs(items) {
+  const latest = new Map();
+  for (const item of items || []) {
+    const key = `${item.customerId || item.customerName || ""}|${item.pricingDate || ""}`;
+    const current = latest.get(key);
+    if (!current) {
+      latest.set(key, item);
+      continue;
+    }
+    const currentCreatedAt = Date.parse(current.createdAt || 0);
+    const nextCreatedAt = Date.parse(item.createdAt || 0);
+    if (nextCreatedAt >= currentCreatedAt) {
+      latest.set(key, item);
+    }
+  }
+  return [...latest.values()].sort((a, b) => (
+    String(b.pricingDate || "").localeCompare(String(a.pricingDate || "")) ||
+    String(b.createdAt || "").localeCompare(String(a.createdAt || "")) ||
+    String(a.customerName || "").localeCompare(String(b.customerName || ""))
+  ));
+}
+
+function OutputCard({ output, fallbackStatus, onOpen, onSelectTraceMode }) {
+  const basis = basisTraceItem(output);
+  const derived = derivedBasisTotals(output);
   return (
-    <button type="button" className="mobile-prices-output-card card" onClick={onOpen}>
-      <div className="mobile-prices-output-head">
-        <strong>{output.productFamily}</strong>
-        <span>{output.status || fallbackStatus}</span>
-      </div>
-      <div className="mobile-prices-kv"><span>Base</span><strong>{formatMoney(output.basePrice)}</strong></div>
-      {"taxes" in output ? <div className="mobile-prices-kv"><span>Taxes</span><strong>{formatMoney(output.taxes)}</strong></div> : null}
-      <div className="mobile-prices-kv"><span>Total</span><strong>{formatMoney(output.totalPrice)}</strong></div>
-    </button>
+    <div className="mobile-prices-output-card card">
+      <button type="button" className="mobile-prices-output-open" onClick={onOpen}>
+        <div className="mobile-prices-output-head">
+          <strong>{productFamilyLabel(output.productFamily)}</strong>
+          <span>{output.status || fallbackStatus}</span>
+        </div>
+      </button>
+      {basis ? (
+        <div className="mobile-prices-basis-grid">
+          <div className={`mobile-prices-kv ${basisCellTone("spot", basis.recommendation)}`.trim()}><span>Spot Basis</span><strong>{formatMoney(basis.spotValue)}</strong>{formatBasisObserved(output, "spot") ? <small>{formatBasisObserved(output, "spot")}</small> : null}</div>
+          <div className={`mobile-prices-kv ${basisCellTone("rack", basis.recommendation)}`.trim()}><span>Rack Basis</span><strong>{formatMoney(basis.rackValue)}</strong>{formatBasisObserved(output, "rack") ? <small>{formatBasisObserved(output, "rack")}</small> : null}</div>
+          <div className={`mobile-prices-kv ${basisCellTone("winner", basis.recommendation)}`.trim()}><span>Using</span><strong>{basis.recommendation || "n/a"}</strong></div>
+          <button type="button" className={`mobile-prices-basis-action ${basisCellTone("spot", basis.recommendation)}`.trim()} onClick={() => onSelectTraceMode("spot")}><span>Derived Spot</span><strong>{formatMoney(derived?.spotTotal)}</strong></button>
+          <button type="button" className={`mobile-prices-basis-action ${basisCellTone("rack", basis.recommendation)}`.trim()} onClick={() => onSelectTraceMode("rack")}><span>Derived Rack</span><strong>{formatMoney(derived?.rackTotal)}</strong></button>
+          <div className={`mobile-prices-kv ${basisCellTone("winner", basis.recommendation)}`.trim()}><span>Difference</span><strong>{derived?.difference == null ? "n/a" : `${derived.difference > 0 ? "+" : ""}${formatMoney(derived.difference)}`}</strong></div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -53,7 +279,7 @@ export function MobilePricesPage() {
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [selectedSection, setSelectedSection] = useState("run");
   const [customerSearch, setCustomerSearch] = useState("");
-  const [pricingDate, setPricingDate] = useState(new Date().toISOString().slice(0, 10));
+  const [pricingDate, setPricingDate] = useState(localDateInputValue());
   const [customerProfile, setCustomerProfile] = useState(null);
   const [profileDraft, setProfileDraft] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -66,6 +292,7 @@ export function MobilePricesPage() {
   const [selectedSourceDetail, setSelectedSourceDetail] = useState(null);
   const [activeSheet, setActiveSheet] = useState("");
   const [selectedFamily, setSelectedFamily] = useState("");
+  const [selectedTraceMode, setSelectedTraceMode] = useState("rack");
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -140,10 +367,11 @@ export function MobilePricesPage() {
         api.getGeneratedPricingOutputs({ pricingDate: nextPricingDate, customerId }),
         api.getPricingSources({ pricingDate: nextPricingDate })
       ]);
+      const latestOutputs = latestGeneratedOutputs(nextOutputs);
       setRunHistory(history);
-      setOutputs(nextOutputs);
+      setOutputs(latestOutputs);
       setSources(nextSources);
-      setSelectedOutputId((current) => nextOutputs.some((item) => item.id === current) ? current : (nextOutputs[0]?.id || ""));
+      setSelectedOutputId((current) => latestOutputs.some((item) => item.id === current) ? current : (latestOutputs[0]?.id || ""));
       setSelectedSourceId((current) => nextSources.some((item) => item.id === current) ? current : (nextSources[0]?.id || ""));
     } catch (loadError) {
       setRunHistory(null);
@@ -173,6 +401,18 @@ export function MobilePricesPage() {
         setProfileDraft(profile ? {
           effectiveStart: profile.effectiveStart || pricingDate,
           effectiveEnd: profile.effectiveEnd || "",
+          distributionLabel: profile.rules?.distributionLabel ?? "",
+          gasPrepay: profile.rules?.gasPrepay ?? "",
+          dieselPrepay: profile.rules?.dieselPrepay ?? "",
+          storageFee: profile.rules?.storageFee ?? "",
+          gasFedExcise: profile.rules?.gasFedExcise ?? "",
+          gasStateExcise: profile.rules?.gasStateExcise ?? "",
+          dieselFedExcise: profile.rules?.dieselFedExcise ?? "",
+          dieselStateExcise: profile.rules?.dieselStateExcise ?? "",
+          gasSalesTaxRate: profile.rules?.gasSalesTaxRate ?? "",
+          dieselSalesTaxRate: profile.rules?.dieselSalesTaxRate ?? "",
+          gasRetailMargin: profile.rules?.gasRetailMargin ?? "",
+          dieselRetailMargin: profile.rules?.dieselRetailMargin ?? "",
           freightCostGas: profile.freightCostGas ?? "",
           freightCostDiesel: profile.freightCostDiesel ?? "",
           rackMarginGas: profile.rackMarginGas ?? "",
@@ -187,6 +427,18 @@ export function MobilePricesPage() {
         } : {
           effectiveStart: pricingDate,
           effectiveEnd: "",
+          distributionLabel: "",
+          gasPrepay: "",
+          dieselPrepay: "",
+          storageFee: "",
+          gasFedExcise: "",
+          gasStateExcise: "",
+          dieselFedExcise: "",
+          dieselStateExcise: "",
+          gasSalesTaxRate: "",
+          dieselSalesTaxRate: "",
+          gasRetailMargin: "",
+          dieselRetailMargin: "",
           freightCostGas: "",
           freightCostDiesel: "",
           rackMarginGas: "",
@@ -206,6 +458,18 @@ export function MobilePricesPage() {
         setProfileDraft({
           effectiveStart: pricingDate,
           effectiveEnd: "",
+          distributionLabel: "",
+          gasPrepay: "",
+          dieselPrepay: "",
+          storageFee: "",
+          gasFedExcise: "",
+          gasStateExcise: "",
+          dieselFedExcise: "",
+          dieselStateExcise: "",
+          gasSalesTaxRate: "",
+          dieselSalesTaxRate: "",
+          gasRetailMargin: "",
+          dieselRetailMargin: "",
           freightCostGas: "",
           freightCostDiesel: "",
           rackMarginGas: "",
@@ -275,6 +539,7 @@ export function MobilePricesPage() {
     if (!selectedCustomerId || !profileDraft) return;
     setError(""); setStatus("Saving profile...");
     try {
+      const normalizedRuleFields = Object.fromEntries(PROFILE_RULE_FIELDS.map((field) => [field, profileDraft[field] === "" ? null : profileDraft[field]]));
       const saved = await api.saveCustomerPricingProfile(selectedCustomerId, {
         effectiveStart: profileDraft.effectiveStart || pricingDate,
         effectiveEnd: profileDraft.effectiveEnd || "",
@@ -287,6 +552,7 @@ export function MobilePricesPage() {
         discountPremium: profileDraft.discountPremium,
         discountDiesel: profileDraft.discountDiesel,
         rules: {
+          ...normalizedRuleFields,
           branch: profileDraft.branch || "unbranded",
           marketKey: profileDraft.marketKey || "",
           terminalKey: profileDraft.terminalKey || ""
@@ -301,8 +567,9 @@ export function MobilePricesPage() {
     }
   }
 
-  function openFamilySheet(family) {
+  function openFamilySheet(family, traceMode = "") {
     setSelectedFamily(family);
+    setSelectedTraceMode(traceMode || defaultTraceMode(familyDetail?.productFamily === family ? familyDetail : (preview?.outputs || selectedOutputDetail?.detail?.outputs || []).find((item) => item.productFamily === family) || { trace: [] }));
     setActiveSheet("family");
   }
 
@@ -333,14 +600,14 @@ export function MobilePricesPage() {
   if (loading) return <div className="login-status">Loading mobile prices...</div>;
 
   const outputCards = selectedOutputDetail?.detail?.outputs?.length
-    ? selectedOutputDetail.detail.outputs
-    : PRODUCT_FAMILIES.map((family) => ({
+    ? selectedOutputDetail.detail.outputs.filter((item) => VISIBLE_PRODUCT_FAMILIES.includes(item.productFamily))
+    : VISIBLE_PRODUCT_FAMILIES.map((family) => ({
         productFamily: family,
         basePrice: selectedOutputDetail?.[`${family}Base`] ?? selectedOutputDetail?.[`${family}base`] ?? null,
         totalPrice: selectedOutputDetail?.[`${family}Total`] ?? selectedOutputDetail?.[`${family}total`] ?? null,
         trace: []
       }));
-  const familyDetail = (preview?.outputs || selectedOutputDetail?.detail?.outputs || []).find((item) => item.productFamily === selectedFamily);
+  const familyDetail = (preview?.outputs || selectedOutputDetail?.detail?.outputs || []).filter((item) => VISIBLE_PRODUCT_FAMILIES.includes(item.productFamily)).find((item) => item.productFamily === selectedFamily);
 
   return (
     <div className="mobile-prices-page">
@@ -348,11 +615,11 @@ export function MobilePricesPage() {
         <div>
           <div className="price-tables-kicker">Prototype</div>
           <h1>Mobile Prices</h1>
-          <p>Mobile-first concept for customer pricing, focused on one customer and one action at a time.</p>
+          <p>Mobile-first concept for terminal pricing, focused on one terminal and one action at a time.</p>
         </div>
         <div className="mobile-prices-controls">
           <label><span>Date</span><input type="date" value={pricingDate} onChange={(event) => setPricingDate(event.target.value)} /></label>
-          <button type="button" onClick={() => setActiveSheet("customers")}>{selectedCustomer?.name || "Choose Customer"}</button>
+          <button type="button" onClick={() => setActiveSheet("customers")}>{selectedCustomer?.name || "Choose Terminal"}</button>
         </div>
       </section>
 
@@ -370,7 +637,7 @@ export function MobilePricesPage() {
       ) : null}
 
       <section className="mobile-prices-summary-grid">
-        <div className="metric-card"><div className="metric-label">Customer</div><div className="metric-value">{selectedCustomer?.name || "n/a"}</div></div>
+        <div className="metric-card"><div className="metric-label">Terminal</div><div className="metric-value">{selectedCustomer?.name || "n/a"}</div></div>
         <div className="metric-card"><div className="metric-label">Terminal</div><div className="metric-value">{selectedTerminalKey || "n/a"}</div></div>
         <div className="metric-card"><div className="metric-label">Outputs</div><div className="metric-value">{runHistory?.total || 0}</div></div>
       </section>
@@ -379,7 +646,7 @@ export function MobilePricesPage() {
       {selectedSection === "run" ? (
         <section className="mobile-prices-section card">
           <div className="mobile-prices-section-head">
-            <div><div className="price-tables-panel-kicker">Run</div><h3>{selectedCustomer?.name || "Select a customer"}</h3></div>
+            <div><div className="price-tables-panel-kicker">Run</div><h3>{selectedCustomer?.name || "Select a terminal"}</h3></div>
             <button type="button" onClick={() => setActiveSheet("profile")}>Edit Profile</button>
           </div>
           <div className="mobile-prices-rule-summary card">
@@ -409,7 +676,7 @@ export function MobilePricesPage() {
           {preview ? (
             <>
               <div className="mobile-prices-output-grid">
-                {preview.outputs?.map((output) => <OutputCard key={output.productFamily} output={output} fallbackStatus={preview.status} onOpen={() => openFamilySheet(output.productFamily)} />)}
+                {preview.outputs?.filter((output) => VISIBLE_PRODUCT_FAMILIES.includes(output.productFamily)).map((output) => <OutputCard key={output.productFamily} output={output} fallbackStatus={preview.status} onOpen={() => openFamilySheet(output.productFamily)} onSelectTraceMode={(mode) => openFamilySheet(output.productFamily, mode)} />)}
               </div>
             </>
           ) : <div className="price-tables-empty">Run preview to inspect mobile output cards.</div>}
@@ -425,7 +692,7 @@ export function MobilePricesPage() {
               <div className="mobile-prices-kv"><span>Regular</span><strong>{formatMoney(output.regularTotal)}</strong></div>
               <div className="mobile-prices-kv"><span>Created</span><strong>{formatDateTime(output.createdAt)}</strong></div>
             </button>
-          )) : <div className="price-tables-empty">No generated outputs for this customer/date yet.</div>}
+          )) : <div className="price-tables-empty">No generated outputs for this terminal/date yet.</div>}
         </section>
       ) : null}
 
@@ -474,7 +741,7 @@ export function MobilePricesPage() {
           ))}
         </div>
         <div className="mobile-prices-bottom-actions">
-          <button type="button" onClick={() => setActiveSheet("customers")}>{selectedCustomer?.name ? "Switch Customer" : "Customers"}</button>
+          <button type="button" onClick={() => setActiveSheet("customers")}>{selectedCustomer?.name ? "Switch Terminal" : "Terminals"}</button>
           <button type="button" onClick={() => setActiveSheet("profile")} disabled={!selectedCustomerId}>Profile</button>
           <button type="button" onClick={handlePreview} disabled={!selectedCustomerId}>Preview</button>
           <button type="button" onClick={handleGenerate} disabled={!selectedCustomerId}>Generate</button>
@@ -482,9 +749,9 @@ export function MobilePricesPage() {
       </div>
 
       {activeSheet === "customers" ? (
-        <Sheet title="Customers" subtitle="Pick the customer you want to work on" onClose={() => setActiveSheet("")}>
+        <Sheet title="Terminals" subtitle="Pick the terminal you want to work on" onClose={() => setActiveSheet("")}>
           <label className="mobile-prices-search">
-            <span>Search customers</span>
+            <span>Search terminals</span>
             <input type="search" value={customerSearch} placeholder="Name, terminal, city" onChange={(event) => setCustomerSearch(event.target.value)} />
           </label>
           <div className="mobile-prices-sheet-grid">
@@ -495,22 +762,34 @@ export function MobilePricesPage() {
               </button>
             ))}
           </div>
-          {!filteredCustomers.length ? <div className="price-tables-empty">No customers matched that search.</div> : null}
+          {!filteredCustomers.length ? <div className="price-tables-empty">No terminals matched that search.</div> : null}
         </Sheet>
       ) : null}
 
       {activeSheet === "output" && selectedOutputDetail ? (
         <Sheet title={selectedOutputDetail.customerName} subtitle={`${selectedOutputDetail.status} | ${selectedOutputDetail.pricingDate}`} onClose={() => setActiveSheet("")}>
           <div className="mobile-prices-output-grid">
-            {outputCards.map((output) => <OutputCard key={output.productFamily} output={output} fallbackStatus={selectedOutputDetail.status} onOpen={() => openFamilySheet(output.productFamily)} />)}
+            {outputCards.map((output) => <OutputCard key={output.productFamily} output={output} fallbackStatus={selectedOutputDetail.status} onOpen={() => openFamilySheet(output.productFamily)} onSelectTraceMode={(mode) => openFamilySheet(output.productFamily, mode)} />)}
           </div>
         </Sheet>
       ) : null}
 
       {activeSheet === "profile" && profileDraft ? (
-        <Sheet title="Customer Profile" subtitle={selectedCustomer?.name || "Selected customer"} onClose={() => setActiveSheet("")}>
+        <Sheet title="Terminal Profile" subtitle={selectedCustomer?.name || "Selected terminal"} onClose={() => setActiveSheet("")}>
           <div className="mobile-prices-profile-form">
             {[
+              ["distributionLabel", "Distribution Label", "text"],
+              ["gasPrepay", "Gas Prepay", "text"],
+              ["dieselPrepay", "Diesel Prepay", "text"],
+              ["storageFee", "Storage Fee", "text"],
+              ["gasFedExcise", "Gas Fed Excise", "text"],
+              ["gasStateExcise", "Gas State Excise", "text"],
+              ["dieselFedExcise", "Diesel Fed Excise", "text"],
+              ["dieselStateExcise", "Diesel State Excise", "text"],
+              ["gasSalesTaxRate", "Gas Sales Tax Rate", "text"],
+              ["dieselSalesTaxRate", "Diesel Sales Tax Rate", "text"],
+              ["gasRetailMargin", "Gas Retail Margin", "text"],
+              ["dieselRetailMargin", "Diesel Retail Margin", "text"],
               ["effectiveStart", "Effective Start", "date"],
               ["effectiveEnd", "Effective End", "date"],
               ["terminalKey", "Terminal Key", "text"],
@@ -568,18 +847,34 @@ export function MobilePricesPage() {
       ) : null}
 
       {activeSheet === "family" && familyDetail ? (
-        <Sheet title={familyDetail.productFamily} subtitle="Full price trace" onClose={() => setActiveSheet("")}>
+        <Sheet title={`${selectedTraceMode === "spot" ? "Derived Spot Detail" : "Derived Rack Detail"} · ${productFamilyLabel(familyDetail.productFamily)}`} subtitle="Full price trace" onClose={() => setActiveSheet("")}>
           <div className="mobile-prices-output-card card">
-            <div className="mobile-prices-kv"><span>Base</span><strong>{formatMoney(familyDetail.basePrice)}</strong></div>
+            <div className="mobile-prices-kv"><span>Exposed Price</span><strong>{formatMoney(familyDetail.totalPrice)}</strong></div>
             {"taxes" in familyDetail ? <div className="mobile-prices-kv"><span>Taxes</span><strong>{formatMoney(familyDetail.taxes)}</strong></div> : null}
-            <div className="mobile-prices-kv"><span>Total</span><strong>{formatMoney(familyDetail.totalPrice)}</strong></div>
+            <div className="mobile-prices-kv"><span>Rack Basis</span><strong>{formatMoney(familyDetail.basePrice)}</strong></div>
+            {basisTraceItem(familyDetail) ? (
+              <div className="mobile-prices-basis-grid">
+                <div className={`mobile-prices-kv ${basisCellTone("spot", basisTraceItem(familyDetail).recommendation)}`.trim()}><span>Spot Basis</span><strong>{formatMoney(basisTraceItem(familyDetail).spotValue)}</strong>{formatBasisObserved(familyDetail, "spot") ? <small>{formatBasisObserved(familyDetail, "spot")}</small> : null}</div>
+                <div className={`mobile-prices-kv ${basisCellTone("rack", basisTraceItem(familyDetail).recommendation)}`.trim()}><span>Rack Basis</span><strong>{formatMoney(basisTraceItem(familyDetail).rackValue)}</strong>{formatBasisObserved(familyDetail, "rack") ? <small>{formatBasisObserved(familyDetail, "rack")}</small> : null}</div>
+                <div className={`mobile-prices-kv ${basisCellTone("winner", basisTraceItem(familyDetail).recommendation)}`.trim()}><span>Using</span><strong>{basisTraceItem(familyDetail).recommendation || "n/a"}</strong></div>
+                <button type="button" className={`mobile-prices-basis-action ${basisCellTone("spot", basisTraceItem(familyDetail).recommendation)}${selectedTraceMode === "spot" ? " mobile-prices-basis-action-active" : ""}`.trim()} onClick={() => setSelectedTraceMode("spot")}><span>Derived Spot</span><strong>{formatMoney(derivedBasisTotals(familyDetail)?.spotTotal)}</strong></button>
+                <button type="button" className={`mobile-prices-basis-action ${basisCellTone("rack", basisTraceItem(familyDetail).recommendation)}${selectedTraceMode === "rack" ? " mobile-prices-basis-action-active" : ""}`.trim()} onClick={() => setSelectedTraceMode("rack")}><span>Derived Rack</span><strong>{formatMoney(derivedBasisTotals(familyDetail)?.rackTotal)}</strong></button>
+                <div className={`mobile-prices-kv ${basisCellTone("winner", basisTraceItem(familyDetail).recommendation)}`.trim()}><span>Difference</span><strong>{derivedBasisTotals(familyDetail)?.difference == null ? "n/a" : `${derivedBasisTotals(familyDetail).difference > 0 ? "+" : ""}${formatMoney(derivedBasisTotals(familyDetail).difference)}`}</strong></div>
+              </div>
+            ) : null}
+          </div>
+          <div className="mobile-prices-trace-context card">{traceModeSummary(familyDetail, selectedTraceMode)}</div>
+          <div className={`mobile-prices-trace-context card ${selectedTraceMode === "spot" ? "price-tables-tone-spot" : "price-tables-tone-rack"}`.trim()}>
+            <strong>{selectedTraceMode === "spot" ? "Spot pickup detail" : "Rack pickup detail"}</strong>
+            {basisValidationLines(familyDetail, selectedTraceMode).map((line) => <span key={line}>{line}</span>)}
           </div>
           <div className="mobile-prices-trace-list">
-            {(familyDetail.trace || []).map((item, index) => (
-              <div key={`${familyDetail.productFamily}-${index}`} className="mobile-prices-trace-row card">
-                <strong>{item.label || item.kind || item.componentKey}</strong>
-                <span>{item.detail}</span>
-                <em>{item.contribution != null ? formatMoney(item.contribution) : item.value != null ? formatMoney(item.value) : "n/a"}</em>
+            {filteredTraceItems(familyDetail).map((item, index) => (
+              <div key={`${familyDetail.productFamily}-${index}`} className={`mobile-prices-trace-row card ${traceLabel(item) === "Landed Cost Price" ? "price-tables-trace-row-success" : selectedTraceMode === "spot" && traceLabelForMode(item, selectedTraceMode) === "Spot Basis" ? "price-tables-trace-row-spot" : selectedTraceMode === "rack" && traceLabelForMode(item, selectedTraceMode) === "Rack Basis" ? "price-tables-trace-row-rack" : ""} ${traceIndentLevel(item, selectedTraceMode) ? `price-tables-trace-row-indent-${traceIndentLevel(item, selectedTraceMode)}` : ""}`.trim()}>
+                <strong>{traceLabelForMode(item, selectedTraceMode)}</strong>
+                {item.detail ? <span>{traceDetailForMode(item, selectedTraceMode)}</span> : null}
+                {traceSourceText(item) ? <small>{traceSourceText(item)}</small> : null}
+                <em>{traceDisplayAmount(item, selectedTraceMode)}</em>
               </div>
             ))}
           </div>
