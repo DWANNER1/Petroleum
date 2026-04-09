@@ -36,18 +36,20 @@ const TERMINAL_KEY_OPTIONS = [{ value: "benicia_terminal", label: "Benicia / San
 const PRODUCT_FAMILY_OPTIONS = [{ value: "regular", label: "Regular" }, { value: "mid", label: "Mid" }, { value: "premium", label: "Premium" }, { value: "diesel", label: "Diesel" }];
 const RULE_STATUS_OPTIONS = [{ value: "draft", label: "Draft" }, { value: "active", label: "Active" }, { value: "retired", label: "Retired" }];
 const VENDOR_SELECTION_MODE_OPTIONS = [{ value: "lowest", label: "Lowest" }, { value: "highest", label: "Highest" }, { value: "first_available", label: "First Available" }, { value: "specific_vendor", label: "Specific Vendor" }];
+const VENDOR_BASIS_MODE_OPTIONS = [{ value: "match_rule_vendor", label: "Use Selected Rack Value" }, { value: "rack_average", label: "Use Rack Comparison Average" }];
 const VENDOR_KEY_OPTIONS = [{ value: "valero", label: "Valero" }, { value: "psx", label: "Phillips 66" }, { value: "tesoro", label: "Tesoro" }, { value: "marathon", label: "Marathon" }, { value: "shell", label: "Shell" }, { value: "chevron", label: "Chevron" }, { value: "bp", label: "BP" }];
 const PROFILE_RULE_FIELDS = ["distributionLabel", "gasPrepay", "dieselPrepay", "storageFee", "gasFedExcise", "gasStateExcise", "dieselFedExcise", "dieselStateExcise", "gasSalesTaxRate", "dieselSalesTaxRate", "gasRetailMargin", "dieselRetailMargin"];
 const EMPTY_CUSTOMER = { name: "", addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "", terminalKey: "", status: "active" };
 const EMPTY_PROFILE = { effectiveStart: "", effectiveEnd: "", freightMiles: "", freightCostGas: "", freightCostDiesel: "", rackMarginGas: "", rackMarginDiesel: "", discountRegular: "", discountMid: "", discountPremium: "", discountDiesel: "", branch: "unbranded", marketKey: "", terminalKey: "", distributionLabel: "", gasPrepay: "", dieselPrepay: "", storageFee: "", gasFedExcise: "", gasStateExcise: "", dieselFedExcise: "", dieselStateExcise: "", gasSalesTaxRate: "", dieselSalesTaxRate: "", gasRetailMargin: "", dieselRetailMargin: "", extraRulesJson: "{}" };
 const EMPTY_RULE = { name: "", productFamily: "regular", effectiveStart: "", effectiveEnd: "", status: "draft", versionLabel: "", notes: "" };
-const EMPTY_VENDOR_SET = { selectionMode: "lowest", productFamily: "regular", marketKey: "", vendorsCsv: "" };
+const EMPTY_VENDOR_SET = { selectionMode: "lowest", productFamily: "regular", marketKey: "", basisMode: "match_rule_vendor", vendorsCsv: "" };
 const TABS = ["overview", "users", "branding", "credentials", "profiles", "rules", "pricing", "version"];
-const VENDOR_SET_HELP_LINES = [
-  { label: "selectionMode", description: "lowest: use the lowest available rack vendor from the selected vendor list; highest: use the highest available vendor; first_available: use the first vendor row found; specific_vendor: effectively constrain to the listed vendor(s), usually one." },
-  { label: "marketKey", description: "Empty means the rule applies to all markets. Otherwise it only applies to that market, like sacramento or stockton." },
-  { label: "productFamily", description: "Which fuel family the vendor set applies to: regular, mid, premium, diesel." }
-];
+  const VENDOR_SET_HELP_LINES = [
+    { label: "selectionMode", description: "lowest: use the lowest available rack vendor from the selected vendor list; highest: use the highest available vendor; first_available: use the first vendor row found; specific_vendor: effectively constrain to the listed vendor(s), usually one." },
+    { label: "basisMode", description: "Use Selected Rack Value: the Rack Basis card shows the exact rack value the rule selected, so it matches Lowest Rack Input. Use Rack Comparison Average: the Rack Basis card shows the broader comparison rack value for the market instead, which may differ from Lowest Rack Input." },
+    { label: "marketKey", description: "Empty means the rule applies to all markets. Otherwise it only applies to that market, like sacramento or stockton." },
+    { label: "productFamily", description: "Which fuel family the vendor set applies to: regular, mid, premium, diesel." }
+  ];
 
 function statusTone(saved) {
   return saved ? "success" : "default";
@@ -125,6 +127,7 @@ function vendorSetsToRows(vendorSets, family) {
         selectionMode: item.selectionMode || "lowest",
         productFamily: item.productFamily || family,
         marketKey: item.marketKey || "",
+        basisMode: item.basisMode || "match_rule_vendor",
         vendorsCsv: Array.isArray(item.vendors) ? item.vendors.join(", ") : ""
       }))
     : [{ ...EMPTY_VENDOR_SET, productFamily: family || "regular" }];
@@ -625,6 +628,7 @@ export function AdminPreviewPage({ user, jobber, onJobberUpdated }) {
           selectionMode: row.selectionMode,
           productFamily: row.productFamily || ruleForm.productFamily,
           marketKey: row.marketKey || "",
+          basisMode: row.basisMode || "match_rule_vendor",
           vendors: row.vendorsCsv.split(",").map((item) => item.trim()).filter(Boolean)
         }));
       let ruleId = selectedRuleId;
@@ -1206,6 +1210,11 @@ export function AdminPreviewPage({ user, jobber, onJobberUpdated }) {
                               <Grid size={{ xs: 12, md: 4 }}>
                                 <TextField select label="productFamily" value={row.productFamily} onChange={(event) => updateVendorSetRow(index, "productFamily", event.target.value)} fullWidth disabled={savingRule}>
                                   {PRODUCT_FAMILY_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+                                </TextField>
+                              </Grid>
+                              <Grid size={{ xs: 12, md: 4 }}>
+                                <TextField select label="basisMode" value={row.basisMode} onChange={(event) => updateVendorSetRow(index, "basisMode", event.target.value)} fullWidth disabled={savingRule}>
+                                  {VENDOR_BASIS_MODE_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
                                 </TextField>
                               </Grid>
                               <Grid size={{ xs: 12 }}>
@@ -1830,6 +1839,18 @@ export function AdminPreviewPage({ user, jobber, onJobberUpdated }) {
                                   disabled={savingRule}
                                 >
                                   {PRODUCT_FAMILY_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+                                </TextField>
+                              </Grid>
+                              <Grid size={{ xs: 12, md: 4 }}>
+                                <TextField
+                                  select
+                                  label="basisMode"
+                                  value={row.basisMode}
+                                  onChange={(event) => updateVendorSetRow(index, "basisMode", event.target.value)}
+                                  fullWidth
+                                  disabled={savingRule}
+                                >
+                                  {VENDOR_BASIS_MODE_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
                                 </TextField>
                               </Grid>
                               <Grid size={{ xs: 12 }}>

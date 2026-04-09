@@ -31,6 +31,7 @@ const RULE_SET_STATUSES = new Set(["draft", "active", "retired"]);
 const GENERATED_PRICE_STATUSES = new Set(["generated", "reviewed", "exported", "sent", "failed"]);
 const DELIVERY_METHODS = new Set(["email", "fax_email", "manual"]);
 const VENDOR_SELECTION_MODES = new Set(["lowest", "highest", "first_available", "specific_vendor"]);
+const VENDOR_BASIS_MODES = new Set(["match_rule_vendor", "rack_average"]);
 const COMPONENT_SOURCE_KINDS = new Set([
   "source_value",
   "tax",
@@ -242,6 +243,7 @@ function pricingRuleVendorSetRow(row) {
     selectionMode: row.selectionMode,
     productFamily: row.productFamily,
     marketKey: row.marketKey,
+    basisMode: row.basisMode || "match_rule_vendor",
     vendors: Array.isArray(row.vendors) ? row.vendors : []
   };
 }
@@ -1224,6 +1226,7 @@ async function listPricingRuleVendorSets(ruleSetId) {
       selection_mode AS "selectionMode",
       product_family AS "productFamily",
       market_key AS "marketKey",
+      basis_mode AS "basisMode",
       vendors_json AS "vendors"
      FROM pricing_rule_vendor_sets
      WHERE rule_set_id=$1
@@ -1380,6 +1383,7 @@ async function savePricingRuleVendorSets(jobberId, ruleSetId, vendorSets) {
     assertAllowedValue("selectionMode", selectionMode, VENDOR_SELECTION_MODES);
     assertAllowedValue("productFamily", pricingText(entry?.productFamily, ruleSet.productFamily) || ruleSet.productFamily, PRODUCT_FAMILIES);
     assertOptionalAllowedValue("marketKey", entry?.marketKey, MARKET_KEYS);
+    assertAllowedValue("basisMode", pricingText(entry?.basisMode, "match_rule_vendor") || "match_rule_vendor", VENDOR_BASIS_MODES);
     for (const vendor of Array.isArray(entry?.vendors) ? entry.vendors : []) {
       assertAllowedValue("vendorKey", vendor, VENDOR_KEYS);
     }
@@ -1389,14 +1393,15 @@ async function savePricingRuleVendorSets(jobberId, ruleSetId, vendorSets) {
     for (const entry of list) {
       await client.query(
         `INSERT INTO pricing_rule_vendor_sets(
-          id, rule_set_id, selection_mode, product_family, market_key, vendors_json
-        ) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`,
+          id, rule_set_id, selection_mode, product_family, market_key, basis_mode, vendors_json
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
         [
           id("pricing-rule-vendor-set"),
           ruleSetId,
           assertAllowedValue("selectionMode", entry.selectionMode, VENDOR_SELECTION_MODES),
           assertAllowedValue("productFamily", pricingText(entry.productFamily, ruleSet.productFamily) || ruleSet.productFamily, PRODUCT_FAMILIES),
           assertOptionalAllowedValue("marketKey", entry.marketKey, MARKET_KEYS),
+          assertAllowedValue("basisMode", pricingText(entry.basisMode, "match_rule_vendor") || "match_rule_vendor", VENDOR_BASIS_MODES),
           JSON.stringify((Array.isArray(entry.vendors) ? entry.vendors : []).map((vendor) => assertAllowedValue("vendorKey", vendor, VENDOR_KEYS)))
         ]
       );

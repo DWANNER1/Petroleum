@@ -462,6 +462,12 @@ function evaluateRuleSet({ ruleSet, productFamily, profile, sourceValues, taxesB
       matchedValueId: resolved.matchedValueId || null,
       matchedObservedAt: matchedInfo.observedAt,
       matchedTimingLabel: matchedInfo.timingLabel,
+      matchedSourceCity: matchedInfo.sourceCity,
+      matchedSourceSupplier: matchedInfo.sourceSupplier,
+      matchedFetchedAt: matchedInfo.fetchedAt,
+      matchedSourceEndpoint: matchedInfo.sourceEndpoint,
+      matchedSourceMode: matchedInfo.sourceMode,
+      matchedPublishedDate: matchedInfo.publishedDate,
       spotObservedAt: spotInfo.observedAt,
       spotTimingLabel: spotInfo.timingLabel,
       spotSourceCity: spotInfo.sourceCity,
@@ -675,6 +681,16 @@ function basisTraceItem(trace) {
   return (trace || []).find((item) => Number.isFinite(item?.spotValue) || Number.isFinite(item?.rackValue)) || null;
 }
 
+function basisModeForFamily(activeRule, family, profile) {
+  const marketKey = String(profile?.rules?.marketKey || "").trim();
+  const vendorSet = (activeRule?.vendorSets || []).find((item) => {
+    if ((item?.productFamily || family) !== family) return false;
+    if (marketKey && item?.marketKey && item.marketKey !== marketKey) return false;
+    return true;
+  });
+  return String(vendorSet?.basisMode || "match_rule_vendor").trim() || "match_rule_vendor";
+}
+
 function productKeyForFamily(family) {
   if (family === "regular") return "reg_87_carb";
   if (family === "mid") return "mid_89_carb";
@@ -683,9 +699,13 @@ function productKeyForFamily(family) {
   return "";
 }
 
-function fallbackBasisData({ family, profile, sourceValues, activeRule }) {
+function fallbackBasisData({ family, profile, sourceValues, activeRule, ruleEvaluation }) {
   const productKey = productKeyForFamily(family);
   if (!productKey || !profile) return null;
+  const basisMode = basisModeForFamily(activeRule, family, profile);
+  const vendorTrace = (ruleEvaluation?.componentTraces || []).find((item) => (
+    item?.sourceKind === "vendor_min" && Number.isFinite(item?.rawValue)
+  ));
   const resolved = bestSpotOrRackValue(
     sourceValues,
     activeRule?.vendorSets || [],
@@ -705,11 +725,26 @@ function fallbackBasisData({ family, profile, sourceValues, activeRule }) {
     profile
   );
   if (!Number.isFinite(resolved.value) && !Number.isFinite(resolved.spotValue) && !Number.isFinite(resolved.rackValue)) {
-    return null;
+    if (!(basisMode === "match_rule_vendor" && vendorTrace)) return null;
   }
+  const rackValue = basisMode === "match_rule_vendor" && Number.isFinite(vendorTrace?.rawValue)
+    ? vendorTrace.rawValue
+    : resolved.rackValue;
+  const recommendation = rackValue == null || (Number.isFinite(resolved.spotValue) && resolved.spotValue <= rackValue) ? "spot" : "rack";
   const matchedInfo = sourceObservedInfo(resolved.matchedValue || null);
   const spotInfo = sourceObservedInfo(resolved.spotMatchedValue || null);
-  const rackInfo = sourceObservedInfo(resolved.rackMatchedValue || null);
+  const rackInfo = basisMode === "match_rule_vendor"
+    ? {
+        observedAt: vendorTrace?.matchedObservedAt || null,
+        timingLabel: vendorTrace?.matchedTimingLabel || null,
+        sourceCity: vendorTrace?.matchedSourceCity || null,
+        sourceSupplier: vendorTrace?.matchedSourceSupplier || null,
+        fetchedAt: vendorTrace?.matchedFetchedAt || null,
+        sourceEndpoint: vendorTrace?.matchedSourceEndpoint || null,
+        sourceMode: vendorTrace?.matchedSourceMode || null,
+        publishedDate: vendorTrace?.matchedPublishedDate || null
+      }
+    : sourceObservedInfo(resolved.rackMatchedValue || null);
   return {
     kind: "derived_basis",
     label: "Spot or Rack",
@@ -718,10 +753,12 @@ function fallbackBasisData({ family, profile, sourceValues, activeRule }) {
     rawValue: Number.isFinite(resolved.value) ? resolved.value : null,
     multiplier: 1,
     contribution: Number.isFinite(resolved.value) ? resolved.value : null,
-    detail: resolved.detail,
-    recommendation: resolved.recommendation || null,
+    detail: basisMode === "match_rule_vendor"
+      ? `${resolved.detail}; rack basis set to match the selected vendor-rule input`
+      : resolved.detail,
+    recommendation,
     spotValue: Number.isFinite(resolved.spotValue) ? resolved.spotValue : null,
-    rackValue: Number.isFinite(resolved.rackValue) ? resolved.rackValue : null,
+    rackValue: Number.isFinite(rackValue) ? rackValue : null,
     marketKey: resolved.marketKey || profile?.rules?.marketKey || null,
     terminalKey: resolved.terminalKey || profile?.rules?.terminalKey || null,
     matchedValueId: resolved.matchedValueId || null,
@@ -810,7 +847,8 @@ function skeletonOutputs(profile, taxesByFamily, ruleEvaluations, sourceValues, 
         family,
         profile,
         sourceValues,
-        activeRule: activeRulesByFamily?.[family] || null
+        activeRule: activeRulesByFamily?.[family] || null,
+        ruleEvaluation
       });
       if (fallbackBasis) {
         output.trace.unshift(fallbackBasis);
