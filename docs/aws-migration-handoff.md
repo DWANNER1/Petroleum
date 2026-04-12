@@ -1,5 +1,7 @@
 # Petroleum AWS Migration Handoff
 
+Legacy note: this document is not the active deployment path anymore. The current deployment target is a single AWS Lightsail instance. Use `docs/lightsail-deployment.md` for current deployment steps.
+
 This document describes the recommended AWS target architecture and the cutover steps for moving `Petroleum` from the current local / Railway / Netlify style setup into AWS.
 
 ## Recommended AWS Target

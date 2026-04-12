@@ -190,44 +190,30 @@ Demo users:
 
 ## Hosting
 
-Current production deployment has moved to Render. The Netlify and Railway notes below are legacy setup notes from the earlier MVP hosting path. Keep them only as reference for older infrastructure, not as the current source of truth for production auth or deployment.
+Current deployment target is a single AWS Lightsail instance running:
 
-This repository is configured for:
+- `apps/web-mui` as static files served by Nginx
+- `apps/api` as a Node.js process on port `4000`
+- PostgreSQL via the active database configured in `DATABASE_URL`
 
-- Frontend hosting: Netlify (`netlify.toml`)
-- API hosting: Railway (`railway.json`) with a Railway PostgreSQL service
+Use [docs/lightsail-deployment.md](docs/lightsail-deployment.md) as the current deployment source of truth.
 
-The exact live URL is not stored in this repo. You can find it in:
+The older Netlify, Railway, Amplify, and App Runner notes are legacy reference material only and should not be used for the active deployment path.
 
-- Netlify site dashboard: Site URL
-- Railway service dashboard: Deployment URL (and API domain)
+## Deployment: AWS Lightsail
 
-## Deployment (Free): Netlify + Railway
+High-level Lightsail flow:
 
-This section documents the previous free-hosting path kept in the repo via `netlify.toml` and `railway.json`. Use it only if you intentionally want to reproduce that older setup.
+1. Pull the target GitHub branch onto the Lightsail instance.
+2. Run `npm install` at the repo root.
+3. Build the current frontend with `npm --workspace apps/web-mui run build`.
+4. Restart the API process so `apps/api/src/server.js` is serving on port `4000`.
+5. Point Nginx at `apps/web-mui/dist` and proxy API routes to `127.0.0.1:4000`.
+6. Verify:
+   - `https://your-domain/`
+   - `https://your-domain/health`
 
-### API on Railway
-
-1. In Railway, create a new project from this GitHub repo.
-2. Set service root to repository root (default).
-3. Railway reads `railway.json` and uses:
-   - Build: `npm install && npm --workspace apps/api run build`
-   - Start: `npm --workspace apps/api run start`
-4. Add a PostgreSQL service in Railway and attach/connect it to the API service so `DATABASE_URL` is available.
-5. After first deploy, copy the API URL (for example `https://petroleum-api-production.up.railway.app`).
-
-### Web on Netlify
-
-1. In Netlify, import this repository.
-2. Build settings:
-   - Base directory: *(leave empty)*
-   - Build command: `npm install && npm --workspace apps/web-mui run build`
-   - Publish directory: `apps/web-mui/dist`
-3. Add environment variable:
-   - `VITE_API_BASE_URL` = your Railway API URL
-4. Deploy site.
-
-`netlify.toml` is included with SPA redirect support.
+See [docs/lightsail-deployment.md](docs/lightsail-deployment.md) for the exact commands, environment variables, and Nginx example.
 
 ## Notes
 
@@ -237,7 +223,7 @@ This section documents the previous free-hosting path kept in the repo via `netl
 - Forecourt layout editor and layout version save are implemented in MVP form.
 - Portfolio map uses OpenStreetMap tiles and geocodes sites from `address + postal_code`.
 - Allied transaction generator and usage notes live in `docs/allied-transactions.md`.
-- AWS migration handoff notes live in `docs/aws-migration-handoff.md`.
+- Lightsail deployment notes live in `docs/lightsail-deployment.md`.
 
 ## Pricing Dashboard
 
