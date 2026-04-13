@@ -1,4 +1,23 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+function resolveApiBase() {
+  const configuredBase = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+  if (!configuredBase || typeof window === "undefined") return configuredBase;
+
+  try {
+    const apiUrl = new URL(configuredBase);
+    const appHost = window.location.hostname;
+    const apiHost = apiUrl.hostname;
+    const localhostHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+    if (localhostHosts.has(apiHost) && !localhostHosts.has(appHost)) {
+      return "";
+    }
+  } catch {
+    return configuredBase;
+  }
+
+  return configuredBase;
+}
+
+const API_BASE = resolveApiBase();
 const TOKEN_STORAGE_KEY = "petroleum.mui.auth.token";
 const LEGACY_TOKEN_STORAGE_KEY = "petroleum.auth.token";
 
