@@ -488,14 +488,19 @@ export function AlliedMgmtPage({ focus = "all" }) {
         const cards = (batch.cardIds || [])
           .map((cardId) => upgradeCards.find((card) => card.id === cardId))
           .filter(Boolean);
+        if (!cards.length) return null;
+        if (batch.cancelledAt) return null;
         const targets = batch.siteIds
           .map((siteId) => {
             const siteRow = allSiteManagementRows.find((row) => row.siteId === siteId);
             if (!siteRow) return null;
             const status = inferBatchSiteStatus(batch, siteRow, siteId);
+            if (status.label === "Cancelled") return null;
             return { siteId, siteRow, status };
           })
           .filter(Boolean);
+
+        if (!targets.length) return null;
 
         const pendingCount = targets.filter((target) => target.status.label === "Pending").length;
         const failedCount = targets.filter((target) => target.status.label === "Failed").length;
@@ -521,7 +526,8 @@ export function AlliedMgmtPage({ focus = "all" }) {
           successCount,
           targets
         };
-      });
+      })
+      .filter(Boolean);
   }, [allSiteManagementRows, upgradeBatches, upgradeCards]);
 
   const pushRows = useMemo(

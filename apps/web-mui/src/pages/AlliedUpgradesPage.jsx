@@ -332,12 +332,15 @@ export function AlliedUpgradesPage() {
       .sort((a, b) => new Date(a.scheduledFor).getTime() - new Date(b.scheduledFor).getTime())
       .map((batch, index) => {
         const batchCards = (batch.cards && batch.cards.length ? batch.cards : resolveCardSet(batch.cardIds, cards)) || [];
+        if (!batchCards.length) return null;
+        if (batch.cancelledAt) return null;
         const batchLabel = batchCards.map((card) => card.name).join(", ") || "Upgrade batch";
         const targets = batch.siteIds
           .map((siteId) => {
             const siteRow = siteRows.find((row) => row.siteId === siteId);
             if (!siteRow) return null;
             const cancelled = batch.cancelledAt || (batch.cancelledSiteIds || []).includes(siteId);
+            if (cancelled) return null;
             const scheduledAt = parseScheduledAt(batch.scheduledFor);
             const label = cancelled
               ? "Cancelled"
@@ -360,8 +363,10 @@ export function AlliedUpgradesPage() {
             };
           })
           .filter(Boolean);
+        if (!targets.length) return null;
         return { ...batch, cards: batchCards, sequence: index + 1, targets, batchLabel };
-      });
+      })
+      .filter(Boolean);
   }, [batches, cards, siteRows]);
 
   const selectedCard = useMemo(

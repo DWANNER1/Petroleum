@@ -27,6 +27,7 @@ export default defineConfig({
       "/history": "http://127.0.0.1:4000",
       "/tank-information": "http://127.0.0.1:4000",
       "/allied-transactions": "http://127.0.0.1:4000",
+      "/allied-upgrades": "http://127.0.0.1:4000",
       "/ebols": "http://127.0.0.1:4000",
       "/market": "http://127.0.0.1:4000",
       "/health": "http://127.0.0.1:4000"
